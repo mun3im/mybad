@@ -26,11 +26,12 @@ The goal of this project is to make real-time, low-power bird monitoring practic
 
 Implementations of tiny and efficient neural networks optimized for MyBAD, including:
 
-- **TinyCNN-BAD** (depthwise separable 1D/2D variants)
-- **MobileNetV3-Tiny** (compressed from Small)
-- **DS-CNN** (Google Edge TPU style)
-- **TC-ResNet8 / TC-ResNet14** (Temporally Convolutional CNNs)
-- **Micro-Attention BADNet** (≤150k parameters)
+- **MobileNetV3-Small** Original MCU target
+- **MyBAD-baseline** 99.99% same as TinyChirp CNNMel
+- **MyBAD-separable** Depthwise separable
+- **MyBAD-batchnorm** Baseline + batch normalization
+- **MyBAD-separablebatchnorm** Depthwise separable + batch normalization
+- **MyBAD-optimized** Large, optimized for accuracy
 
 
 All models are designed to run smoothly at low latency and minimal power, even on MCUs.
