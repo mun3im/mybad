@@ -42,13 +42,9 @@ The dataset provides mel-spectrograms in five resolutions:
 
 
 - 80 × 184
-
 - 64 × 184
-
 - 48 × 184
-
 - 32 × 184
-
 - 16 × 184
 
 Each sample is stored as a NumPy .npy file, ready for direct loading into PyTorch or TensorFlow.
@@ -63,11 +59,8 @@ Download the dataset here:
 This repository includes:
 
 - Training pipelines for all model families
-
 - Baseline accuracy benchmarks for each spectrogram size
-
 - Ablation experiments (model width, mel bins, filter sizes, quantization)
-
 - Visualization tools for confusion matrices and ROC curves
 
 You can reproduce the full BAD benchmark suite with a single command.
@@ -77,7 +70,6 @@ You can reproduce the full BAD benchmark suite with a single command.
 We provide export scripts for:
 
 - TensorFlow Lite (int8 / float32)
-
 - TFLM (TensorFlow Lite for Microcontrollers)
 
 And yes — there’s a folder of example firmware templates for STM32 devices.
