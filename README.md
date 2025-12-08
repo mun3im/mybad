@@ -48,7 +48,36 @@ We provide export scripts for:
 
 - TFLM (TensorFlow Lite for Microcontrollers)
 
+## 📦 Folder Structure
+
+/models          # Implementations of TinyCNN, DS-CNN, MobileNetV3-Tiny, etc.
+/data            # Loaders for the MyBAD mel-spectrogram .npy files
+/train           # Training and validation scripts
+/export          # TFLite, ONNX, Edge TPU export utilities
+/experiments     # Ablation studies & benchmark configs
+/deployment      # Example firmware for MCU inference
+
+
+## 🔍 Why This Matters
+
+Tropical ecosystems remain among the least monitored on Earth.
+With Edge AI bird activity detection, we can build:
+
+- low-cost biodiversity sensors
+
+- autonomous acoustic stations
+
+- real-time alerts for conservation
+
+- embedded monitoring networks in remote environments
+
+The MyBAD dataset + Lightweight BAD Models aim to push this forward — making scalable, deployable bioacoustic sensing a reality.
+
 - ONNX for embedded Linux devices
+
+## 📜 Citation
+
+If you use this repository or the MyBAD dataset in your work, please cite the Zenodo entry.
 
 
 And yes — there’s a folder of example firmware templates for ESP32-S3 and STM32 devices.
