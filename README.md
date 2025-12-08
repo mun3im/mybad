@@ -11,15 +11,10 @@ The goal of this project is to make real-time, low-power bird monitoring practic
 ## 🌿 Features
 
 - 🔊 Direct support for MyBAD .npy mel-spectrograms
-
 - ⚡ Lightweight CNN architectures tailored for edge devices
-
 - 🧪 Full training + evaluation pipelines
-
 - 📉 Ablation studies for model size, mel resolution, and quantization
-
 - 📦 Export tools for TFLite, TFLM, ONNX, and Edge TPU
-
 - 🛠 Example firmware templates for MCUs (ESP32-S3, STM32)
 
 ### 🚀 Lightweight BAD Models
