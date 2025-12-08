@@ -9,12 +9,7 @@
 
 ### 1. Input Structure
 
-output_root/
-├── xc00001_2300.wav
-├── ... (exactly 25,000 files)
-└── quarantine/           ← ≤99 files
-    └── xc98765_1200.wav
-
+FLAC files from cleaned MP3
 
 INPUT_ROOT/
 ├── Species_A/
