@@ -18,7 +18,7 @@ INPUT_ROOT/
 │   └── xc67890.flac
 ├── Species_B/
 └── ...
-
+```
 
 ### 2. Per-File Clip Selection Strategy
 
@@ -58,7 +58,6 @@ INPUT_ROOT/
 
 **Single source of truth**: `clips_log.csv`
 
-```text
 → Load CSV (ignore anything already in quarantine/)
 → Sort all clips globally by RMS (descending)
 → Top 25,000     → stay/move to main folder
@@ -68,6 +67,7 @@ INPUT_ROOT/
 
 Final structure:
 
+```text
 output_root/
 ├── xc00001_2300.wav
 ├── ... (exactly 25,000 files)
