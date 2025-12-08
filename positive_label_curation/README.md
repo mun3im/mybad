@@ -58,12 +58,12 @@ INPUT_ROOT/
 
 **Single source of truth**: `clips_log.csv`
 
-→ Load CSV (ignore anything already in quarantine/)
-→ Sort all clips globally by RMS (descending)
-→ Top 25,000     → stay/move to main folder
-→ Next 99        → move to quarantine/
-→ All others     → permanently deleted
-→ Overwrite CSV with final 25,099 rows
+1. Load CSV (ignore anything already in quarantine/)
+2. Sort all clips globally by RMS (descending)
+3. Top 25,000     → stay/move to main folder
+4. Next 99        → move to quarantine/
+5. All others     → permanently deleted
+6. Overwrite CSV with final 25,099 rows
 
 Final structure:
 
