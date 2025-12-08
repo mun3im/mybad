@@ -1,6 +1,6 @@
 # TinyChirp Benchmarks
 
-TensorFlow training pipelines for CNNMel and CNNTime from the TinyChirp paper. 
+TensorFlow training pipelines and INT8 TFlite models for CNNMel and CNNTime from the TinyChirp paper. 
 
 References:
 - TinyChirp: Bird Song Recognition Using TinyML Models on Low-power Wireless Acoustic Sensors
