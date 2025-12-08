@@ -1,4 +1,4 @@
-# MyBAD: Malaysian Bird Activity Detection — Lightweight Edge AI Models
+# MyBAD: Malaysian Bird Activity Detection Lightweight Edge AI Models 
 
 Welcome to the official companion repository for the MyBAD (Malaysian Bird Activity Detection) dataset! 
 
