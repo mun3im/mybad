@@ -1,4 +1,4 @@
-# MyBAD: Malaysian Bird Activity Detection Lightweight Edge AI Models 
+# MyBAD: Malaysian Bird Activity Detection Lightweight Edge AI Models **DRAFT**
 
 Welcome to the official companion repository for the MyBAD (Malaysian Bird Activity Detection) dataset! 
 
@@ -91,9 +91,7 @@ Tropical regions are critically underrepresented in global bioacoustics research
 With Edge AI bird activity detection, we can build:
 
 - a balanced detection dataset,
-
 - microcontroller-friendly spectrograms, and
-
 - lightweight deployable models
 
 makes MyBAD a powerful platform for building scalable, real-time biodiversity sensors, even in remote forest environments.
