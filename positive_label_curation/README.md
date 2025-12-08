@@ -73,6 +73,6 @@ output_root/
 ├── ... (exactly 25,000 files)
 └── quarantine/           ← ≤99 files
     └── xc98765_1200.wav
-
+```
 ### end docs for Stage5
 
