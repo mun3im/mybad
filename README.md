@@ -72,13 +72,14 @@ And yes — there’s a folder of example firmware templates for STM32 devices.
 
 ## 📦 Folder Structure
 
+```
 /models          # Implementations of TinyCNN, DS-CNN, MobileNetV3-Tiny, etc.
 /data            # Loaders for the MyBAD mel-spectrogram .npy files
 /train           # Training and validation scripts
 /export          # TFLite, ONNX, Edge TPU export utilities
 /experiments     # Ablation studies & benchmark configs
 /deployment      # Example firmware for MCU inference
-
+```
 
 ## 🔍 Why This Matters
 
