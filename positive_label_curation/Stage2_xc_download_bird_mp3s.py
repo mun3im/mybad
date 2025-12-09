@@ -10,6 +10,7 @@ Fixes and features:
  - writes an append-only download log CSV (download_log.csv) with status and errors
  - validates downloaded files by minimal size threshold and removes tiny files
  - uses .part temp files and resumes safely (skips existing final files)
+ - creates output CSV with selected fields for successful downloads
 """
 
 import argparse
@@ -31,6 +32,7 @@ REQUEST_TIMEOUT = 30     # seconds per request
 CHUNK_SIZE = 1024 * 64   # 64KB
 USER_AGENT = "xc_downloader/1.0 (+https://your.email@example.com)"
 DOWNLOAD_LOG = os.path.join(DEFAULT_OUT_ROOT, "download_log.csv")
+OUTPUT_CSV = os.path.join(DEFAULT_OUT_ROOT, "successful_downloads.csv")
 MIN_BYTES_ACCEPTED = 1024  # 1 KB minimal acceptable file size (tweak as needed)
 # ------------------------------------
 
@@ -170,6 +172,19 @@ def append_log_row(log_path: str, row: dict):
         writer.writerow(row)
 
 
+def append_output_csv_row(output_path: str, row: dict):
+    """Append one row (dict) to successful_downloads.csv; create header if missing."""
+    ensure_dir(os.path.dirname(output_path))
+    write_header = not os.path.exists(output_path)
+    with open(output_path, "a", newline="", encoding="utf-8") as of:
+        writer = csv.DictWriter(of, fieldnames=[
+            "id", "en", "lat", "lon", "lic", "q", "length", "smp", "file_path"
+        ])
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False, limit: Optional[int] = None):
     """Read CSV and download files according to rules (robust to NaN)."""
     if not os.path.exists(csv_path):
@@ -198,6 +213,11 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
         en = safe_str(row.get("en", ""))
         file_url = safe_str(row.get("file", ""))
         q = safe_str(row.get("q", ""))
+        lat = safe_str(row.get("lat", ""))
+        lon = safe_str(row.get("lon", ""))
+        lic = safe_str(row.get("lic", ""))
+        length = safe_str(row.get("length", ""))
+        smp = safe_str(row.get("smp", ""))
 
         if rec_id == "":
             logger.warning(f"Row {idx}: missing id - skipping")
@@ -244,6 +264,11 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "id": id_str, "en": en, "file_url": file_url, "q": q_char, "out_path": out_path,
                 "status": "exists", "error": "", "bytes": os.path.getsize(out_path), "elapsed_s": 0.0, "ts": time.time()
             })
+            # Add to output CSV for existing files too
+            append_output_csv_row(OUTPUT_CSV, {
+                "id": id_str, "en": en, "lat": lat, "lon": lon, "lic": lic,
+                "q": q_char, "length": length, "smp": smp, "file_path": out_path
+            })
             continue
 
         if dry_run:
@@ -263,6 +288,11 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
             append_log_row(DOWNLOAD_LOG, {
                 "id": id_str, "en": en, "file_url": file_url, "q": q_char, "out_path": out_path,
                 "status": "ok", "error": "", "bytes": bytes_written, "elapsed_s": round(elapsed, 2), "ts": time.time()
+            })
+            # Add to output CSV for successful downloads
+            append_output_csv_row(OUTPUT_CSV, {
+                "id": id_str, "en": en, "lat": lat, "lon": lon, "lic": lic,
+                "q": q_char, "length": length, "smp": smp, "file_path": out_path
             })
         else:
             failed += 1
@@ -285,7 +315,8 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
     logger.info(f"Skipped (no URL): {skipped_no_url}")
     logger.info(f"Skipped (already exists): {skipped_exists}")
     logger.info(f"Failed downloads: {failed}")
-    logger.info(f"Download log (if created) at: {DOWNLOAD_LOG}")
+    logger.info(f"Download log at: {DOWNLOAD_LOG}")
+    logger.info(f"Successful downloads CSV at: {OUTPUT_CSV}")
 
 
 def parse_cmdline():
@@ -304,8 +335,9 @@ def main():
     dry_run = args.dry_run
     limit = args.limit
 
-    global DOWNLOAD_LOG
+    global DOWNLOAD_LOG, OUTPUT_CSV
     DOWNLOAD_LOG = os.path.join(out_root, "download_log.csv")
+    OUTPUT_CSV = os.path.join(out_root, "successful_downloads.csv")
 
     logger.info(f"Output root: {out_root}")
     ensure_dir(out_root)
