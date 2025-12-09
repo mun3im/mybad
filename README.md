@@ -93,5 +93,5 @@ makes MyBAD a powerful platform for building scalable, real-time biodiversity se
 
 ## 📜 Citation
 
-If you use this repository or the MyBAD dataset in your research, please cite the Zenodo dataset:
+If you use this repository or the MyBAD dataset in your research, please cite the Zenodo dataset: https://doi.org/10.5281/zenodo.17791820
 
