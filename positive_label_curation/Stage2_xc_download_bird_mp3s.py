@@ -11,6 +11,7 @@ Fixes and features:
  - validates downloaded files by minimal size threshold and removes tiny files
  - uses .part temp files and resumes safely (skips existing final files)
  - creates output CSV with selected fields for successful downloads
+ - records failed downloads to failed_downloads.csv for manual retry
 """
 
 import argparse
@@ -31,13 +32,14 @@ MAX_RETRIES = 4
 REQUEST_TIMEOUT = 30     # seconds per request
 CHUNK_SIZE = 1024 * 64   # 64KB
 USER_AGENT = "xc_downloader/1.0 (+https://your.email@example.com)"
-DOWNLOAD_LOG = os.path.join(DEFAULT_OUT_ROOT, "download_log.csv")
-OUTPUT_CSV = os.path.join(DEFAULT_OUT_ROOT, "successful_downloads.csv")
+DOWNLOAD_LOG = os.path.join(DEFAULT_OUT_ROOT, "Stage2_download_log.csv")
+OUTPUT_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_successful_downloads.csv")
+FAILED_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_failed_downloads.csv")
 MIN_BYTES_ACCEPTED = 1024  # 1 KB minimal acceptable file size (tweak as needed)
 # ------------------------------------
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("xc_downloader_fixed")
+logger = logging.getLogger("xc_downloader")
 
 
 def sanitize_folder_name(name: str) -> str:
@@ -93,7 +95,13 @@ def download_url_to_path(url: str, out_path: str, max_retries: int = MAX_RETRIES
             with requests.get(url, headers=headers, stream=True, timeout=timeout) as r:
                 if r.status_code != 200:
                     msg = f"Non-200 status {r.status_code}"
-                    logger.warning(f"{msg} for URL {url} (resp text start: {r.text[:200]!r})")
+                    # sometimes response body is HTML; limit logging size
+                    text_sample = ""
+                    try:
+                        text_sample = r.text[:200]
+                    except Exception:
+                        pass
+                    logger.warning(f"{msg} for URL {url} (resp text start: {text_sample!r})")
                     # 4xx likely won't succeed by retrying
                     if 400 <= r.status_code < 500:
                         return False, f"{msg} (client error)", 0, time.time() - start_time_total
@@ -185,6 +193,19 @@ def append_output_csv_row(output_path: str, row: dict):
         writer.writerow(row)
 
 
+def append_failed_row(failed_path: str, row: dict):
+    """Append one row (dict) to failed_downloads.csv; create header if missing."""
+    ensure_dir(os.path.dirname(failed_path))
+    write_header = not os.path.exists(failed_path)
+    with open(failed_path, "a", newline="", encoding="utf-8") as ff:
+        writer = csv.DictWriter(ff, fieldnames=[
+            "id", "en", "file_url", "q", "out_path", "error", "bytes", "elapsed_s", "ts"
+        ])
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
 def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False, limit: Optional[int] = None):
     """Read CSV and download files according to rules (robust to NaN)."""
     if not os.path.exists(csv_path):
@@ -226,6 +247,7 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "id": "", "en": en, "file_url": file_url, "q": q, "out_path": "",
                 "status": "skip", "error": "missing id", "bytes": 0, "elapsed_s": 0.0, "ts": time.time()
             })
+            # Do not add to failed_downloads.csv because there's no id to retry easily.
             continue
 
         # skip if file URL missing
@@ -236,6 +258,7 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "id": rec_id, "en": en, "file_url": file_url, "q": q, "out_path": "",
                 "status": "skip", "error": "no_url", "bytes": 0, "elapsed_s": 0.0, "ts": time.time()
             })
+            # Not adding to failed_downloads.csv since there's no usable URL
             continue
 
         # quality char (append)
@@ -301,6 +324,11 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "id": id_str, "en": en, "file_url": file_url, "q": q_char, "out_path": out_path,
                 "status": "fail", "error": err_msg, "bytes": bytes_written, "elapsed_s": round(elapsed, 2), "ts": time.time()
             })
+            # record to failed_downloads.csv for manual reattempts
+            append_failed_row(FAILED_CSV, {
+                "id": id_str, "en": en, "file_url": file_url, "q": q_char, "out_path": out_path,
+                "error": err_msg, "bytes": bytes_written, "elapsed_s": round(elapsed, 2), "ts": time.time()
+            })
             # ensure no tiny leftover
             try:
                 tmp = out_path + ".part"
@@ -317,6 +345,7 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
     logger.info(f"Failed downloads: {failed}")
     logger.info(f"Download log at: {DOWNLOAD_LOG}")
     logger.info(f"Successful downloads CSV at: {OUTPUT_CSV}")
+    logger.info(f"Failed downloads CSV at: {FAILED_CSV}")
 
 
 def parse_cmdline():
@@ -335,9 +364,10 @@ def main():
     dry_run = args.dry_run
     limit = args.limit
 
-    global DOWNLOAD_LOG, OUTPUT_CSV
+    global DOWNLOAD_LOG, OUTPUT_CSV, FAILED_CSV
     DOWNLOAD_LOG = os.path.join(out_root, "download_log.csv")
     OUTPUT_CSV = os.path.join(out_root, "successful_downloads.csv")
+    FAILED_CSV = os.path.join(out_root, "failed_downloads.csv")
 
     logger.info(f"Output root: {out_root}")
     ensure_dir(out_root)

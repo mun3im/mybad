@@ -169,19 +169,20 @@ class QuarantineManager:
         self.root = root
         self.quarantine_dir = root / "quarantine"
 
-    def quarantine_duplicates(self, perfect_duplicates: List[Tuple[Path, Path]]) -> int:
+    def quarantine_duplicates(self, perfect_duplicates: List[Tuple[Path, Path]], dry_run: bool = False) -> int:
         """
         Move one file from each perfect duplicate pair to quarantine.
-        Returns number of files moved.
+        Returns number of files moved (or would-be moved in dry-run).
         """
         if not perfect_duplicates:
             return 0
 
-        self.quarantine_dir.mkdir(exist_ok=True)
+        if not dry_run:
+            self.quarantine_dir.mkdir(exist_ok=True)
         moved_count = 0
         moved_files = set()
 
-        print(f"\nQuarantining {len(perfect_duplicates)} perfect duplicate pair(s)...")
+        print(f"\n{'[DRY RUN] Would quarantine' if dry_run else 'Quarantining'} {len(perfect_duplicates)} perfect duplicate pair(s)...")
 
         for file1, file2 in perfect_duplicates:
             # Determine which file to move (prefer file2, but move file1 if file2 was already moved)
@@ -198,15 +199,20 @@ class QuarantineManager:
             # Preserve subfolder structure in quarantine
             rel_path = target_file.relative_to(self.root)
             quarantine_target = self.quarantine_dir / rel_path
-            quarantine_target.parent.mkdir(parents=True, exist_ok=True)
 
-            try:
-                shutil.move(str(target_file), str(quarantine_target))
-                moved_count += 1
-                print(f"  Moved: {rel_path}")
-            except Exception as e:
-                print(f"  Failed to move {rel_path}: {e}", file=sys.stderr)
+            if dry_run:
+                print(f"  [DRY RUN] Would move: {rel_path}")
+            else:
+                quarantine_target.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    shutil.move(str(target_file), str(quarantine_target))
+                    moved_count += 1
+                    print(f"  Moved: {rel_path}")
+                except Exception as e:
+                    print(f"  Failed to move {rel_path}: {e}", file=sys.stderr)
 
+        if dry_run:
+            return len(moved_files)
         return moved_count
 
 
@@ -323,6 +329,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_true",
         help="Skip moving perfect duplicates to quarantine folder"
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate quarantining without actually moving files"
+    )
     return parser.parse_args()
 
 
@@ -353,7 +364,7 @@ def main():
     moved_count = 0
     if not args.no_quarantine and perfect_duplicates:
         manager = QuarantineManager(root)
-        moved_count = manager.quarantine_duplicates(perfect_duplicates)
+        moved_count = manager.quarantine_duplicates(perfect_duplicates, dry_run=args.dry_run)
 
     # Write and display results
     ResultsWriter.write(args.output, root, similar_pairs, moved_count)
