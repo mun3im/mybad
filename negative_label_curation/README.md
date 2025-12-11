@@ -18,7 +18,7 @@ We carefully selected four complementary datasets:
 | **DCASE** (BirdVox, Freefield1010, Warblrb10k) | ~21,000 samples | Expert-annotated environmental soundscapes (wind, rain, insects, ambient noise) from bird detection challenges |
 | **ESC-50** | ~350 samples | Diverse environmental sounds (50 categories) including edge cases like footsteps, water, mechanical sounds |
 | **FSC-22** | Variable | Other biological sounds (mammals, amphibians, invertebrates) that co-occur with birds |
-| **DATASEC** | Dynamic (fills to 25k) | Deployment-aware allocation: 95% voices, 5% music (realistic for field environments) |
+| **DATASEC** | Dynamic (fills to 25k) | Environmental sounds for realistic  field environments |
 
 ## Pipeline Stages
 
