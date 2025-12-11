@@ -1,78 +1,127 @@
-# XC → 3-Second Clips Extraction Pipeline  
-**Goal**: From thousands of Xeno-canto FLAC recordings → extract high-quality, non-silent 3-second clips  
-**Final dataset (when using `--flatten`)**:  
-- Exactly **25,000 loudest clips** in the main folder  
-- **≤99 clips** in `quarantine/` (the "almost made it" ones)  
-- Everything else permanently deleted
+# Positive Label Curation Pipeline
 
----
+Audio data curation pipeline for the MyBAD (Malaysian Bird Audio Dataset) project. This pipeline fetches, downloads, processes, and curates bird audio recordings from Xeno-Canto.
 
-### 1. Input Structure
+## Pipeline Stages
 
-FLAC files from cleaned MP3
+### Stage 1: Fetch Metadata
+**Script:** `Stage1_xc_fetch_bird_metadata.py`
 
-```text
-INPUT_ROOT/
-├── Species_A/
-│   ├── xc12345.flac
-│   └── xc67890.flac
-├── Species_B/
-└── ...
+Fetches bird species metadata from Xeno-Canto API for specified regions.
+
+```bash
+python Stage1_xc_fetch_bird_metadata.py --country MY --output xc_malaysia_birds.csv
 ```
 
-### 2. Per-File Clip Selection Strategy
+### Stage 2: Download Audio
+**Script:** `Stage2_xc_download_bird_mp3s.py`
 
-| Recording Duration | Expected Clips | Rule |
-|--------------------|----------------|------|
-| < 3.0 s            | 0              | Skip |
-| 3.0 – 6.0 s        | 1              | Best 3s segment |
-| 6.0 – 12.0 s       | 2              | Two diverse segments |
-| ≥ 12.0 s           | 2              | Skip first 3s (avoid announcer), then pick 2 diverse |
+Downloads MP3 audio files from Xeno-Canto based on metadata CSV.
 
-→ Uses **sliding 3.0s windows** with **100 ms step**
-
-### 3. Clip Selection Algorithm (per file)
-
-1. Compute RMS for every 3s window
-2. Keep only windows with **RMS ≥ threshold** (default: 0.003)
-3. Sort candidates by RMS descending
-4. Greedily pick highest → remove all windows within ±1.5 s (temporal diversity)
-5. Repeat until target reached
-6. If `--guarantee` → fall back to best windows even below threshold
-
-### 4. Audio Processing per Clip
-
-- Extract exact 3.0s segment
-- Detect clipping (`|sample| ≥ 0.9999`)
-- If clipped → peak scale to 0.99 + soft tanh limiter (α = 5.0)
-- Save as **16 kHz, 16-bit PCM WAV**
-
-### 5. Output Modes
-
-| Mode       | Placement                                    | Example Filename           |
-|------------|----------------------------------------------|----------------------------|
-| Default    | `output_root/Species_Name/...`               | Hierarchical               |
-| `--flatten`| `output_root/xc12345_1500.wav`               | Flat (recommended)         |
-
-### 6. Global Post-Processing (`--flatten` only)
-
-**Single source of truth**: `clips_log.csv`
-
-1. Load CSV (ignore anything already in quarantine/)
-2. Sort all clips globally by RMS (descending)
-3. Top 25,000     → stay/move to main folder
-4. Next 99        → move to quarantine/
-5. All others     → permanently deleted
-6. Overwrite CSV with final 25,099 rows
-
-Final structure:
-
-```text
-output_root/
-├── xc00001_2300.wav
-├── ... (exactly 25,000 files)
-└── quarantine/           ← ≤99 files
-    └── xc98765_1200.wav
+```bash
+python Stage2_xc_download_bird_mp3s.py xc_malaysia_birds.csv --output-dir downloads/
 ```
-### end docs for Stage5
 
+### Stage 3: Convert to FLAC
+**Script:** `Stage3_convert_mp3_to_16k_flac.py`
+
+Converts MP3 files to 16kHz mono FLAC format for consistent processing.
+
+```bash
+python Stage3_convert_mp3_to_16k_flac.py downloads/ --output-dir flac_16k/
+```
+
+### Stage 4: Detect Duplicates
+**Script:** `Stage4_find_flac_duplicates.py`
+
+Detects and quarantines duplicate audio clips using acoustic similarity.
+
+```bash
+python Stage4_find_flac_duplicates.py clips/ --recursive --output duplicate_pairs.txt
+```
+
+**Features:**
+- Computes mel-spectrogram embeddings for each audio file
+- Performs all-pairs similarity comparison using cosine similarity
+- Automatically quarantines perfect duplicates (similarity ≥ 0.999999)
+- Reports near-duplicates (similarity ≥ 0.997) for manual review
+
+**See:** [Stage4_ALGO_DOCUMENT.md](./Stage4_ALGO_DOCUMENT.md) for detailed algorithm documentation.
+
+### Stage 5: Extract Clips
+**Script:** `Stage5_extract_3s_clips_from_flac.py`
+
+Extracts 3-second non-overlapping clips from full-length FLAC recordings.
+
+```bash
+python Stage5_extract_3s_clips_from_flac.py flac_16k/ --output-dir clips/ --duration 3.0
+```
+
+## Key Parameters
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Sample Rate | 16 kHz | Consistent audio processing |
+| Clip Duration | 3.0 sec | Fixed-length segments for modeling |
+| Audio Format | FLAC | Lossless compression |
+| Channels | Mono | Single-channel audio |
+
+## Duplicate Detection Algorithm
+
+Stage 4 uses acoustic similarity to detect duplicates:
+
+1. **Embedding**: Computes normalized mel-spectrogram (128 mel bins, 8kHz max freq)
+2. **Similarity**: Frame-wise cosine similarity with three metrics:
+   - Mean similarity ≥ 0.997
+   - Min similarity ≥ 0.985
+   - 5th percentile ≥ 0.992
+3. **Quarantine**: Perfect duplicates (≥ 0.999999) moved to `quarantine/` folder
+4. **Output**: Near-duplicates saved to `duplicate_pairs.txt` for review
+
+### Quarantine Structure
+```
+clips/
+├── quarantine/          # Duplicate files moved here
+│   ├── Species_A/
+│   └── Species_B/
+├── Species_A/           # Clean files remain
+└── Species_B/
+```
+
+## Output Files
+
+- `duplicate_pairs.txt` - Tab-separated file with similarity scores and file pairs
+- `quarantine/` - Folder containing quarantined duplicate files
+- `Stage2_successful_downloads.csv` - Log of successfully downloaded files
+
+## Dependencies
+
+```bash
+pip install librosa numpy pandas requests tqdm
+```
+
+## Usage Notes
+
+1. **Recursive search**: Use `--recursive` flag for deeply nested directories
+2. **Quarantine bypass**: Use `--no-quarantine` to only report duplicates without moving files
+3. **Memory usage**: Stage 4 loads all embeddings into RAM; consider batch processing for >100k files
+4. **Floating-point precision**: Perfect duplicate threshold is 0.999999 (not 1.0) to handle numerical precision
+
+## Recent Fixes
+
+**Stage 4 Quarantine Issues (2025-12-11):**
+1. Fixed floating-point precision bug where scores of 0.999999... weren't detected as 1.0
+2. Fixed quarantine logic to handle files appearing in multiple duplicate pairs
+3. Changed threshold from 1.000 to 0.999999 to catch all perfect duplicates
+
+## Project Context
+
+Part of the Malaysian Bird Audio Dataset (MyBAD) project for training bird sound classification models. The pipeline ensures high-quality, deduplicated training data from community-contributed recordings.
+
+## Repository
+
+https://github.com/mun3im/mybad/tree/main/positive_label_curation
+
+## License
+
+See main repository for license information.
