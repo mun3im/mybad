@@ -4,55 +4,37 @@ Welcome to the official companion repository for the MyBAD (Malaysian Bird Activ
 
 This project demonstrates how to train, benchmark, and deploy lightweight neural networks for real-time bird activity detection on Edge AI hardware.
 
-MyBAD contains 50,000 three-second audio clips (25k positive / 25k negative) from Malaysia, processed into multiple mel-spectrogram resolutions and packaged for fast ML experimentation.
+MyBAD contains 50,000 three-second audio clips (25k positive / 25k negative) from Malaysia provided as 16kHz 3-second clips.
 
 The goal of this project is to make real-time, low-power bird monitoring practical and accessible — whether you’re targeting microcontrollers, single-board computers, or embedded AI accelerators.
-
-## 🌿 Features
-
-- 🔊 Direct support for MyBAD .npy mel-spectrograms
-- ⚡ Lightweight CNN architectures tailored for edge devices
-- 🧪 Full training + evaluation pipelines
-- 📉 Ablation studies for model size, mel resolution, and quantization
-- 📦 Export tools for TFLite, TFLM, ONNX, and Edge TPU
-- 🛠 Example firmware templates for MCUs (ESP32-S3, STM32)
 
 ### 🚀 Lightweight BAD Models
 
 Implementations of tiny and efficient neural networks optimized for MyBAD, including:
 
-- **MobileNetV3-Small** Original MCU target
-- **MyBAD-baseline** 99.99% same as TinyChirp CNNMel
-- **MyBAD-separable** Depthwise separable
-- **MyBAD-batchnorm** Baseline + batch normalization
-- **MyBAD-separablebatchnorm** Depthwise separable + batch normalization
-- **MyBAD-optimized** Large, optimized for accuracy
+- TODO
+#- **MobileNetV3-Small** Original MCU target
+#- **MyBAD-baseline** 99.99% same as TinyChirp CNNMel
+#- **MyBAD-separable** Depthwise separable
+#- **MyBAD-batchnorm** Baseline + batch normalization
+#- **MyBAD-separablebatchnorm** Depthwise separable + batch normalization
+#- **MyBAD-optimized** Large, optimized for accuracy
 
 
 All models are designed to run smoothly at low latency and minimal power, even on MCUs.
 
 ## 🎧 Dataset Overview
 
-The dataset provides mel-spectrograms in five resolutions:
 
+Positive samples come from Malaysian bird recordings on Xeno-canto.
+Negative samples are drawn from BirdCLEF BAD sources (BirdVox, Freefield1010, Warblr), with extra non-bird environmental sounds from ESC50, FSC22 and DataSEC.
 
-- 80 × 184
-- 64 × 184
-- 48 × 184
-- 32 × 184
-- 16 × 184
-
-Each sample is stored as a NumPy .npy file, ready for direct loading into PyTorch or TensorFlow.
-
-Positive samples come from Malaysian/Singaporean bird recordings on Xeno-canto, plus supplements from Macaulay Library for common species.
-Negative samples are drawn from BirdCLEF BAD sources (BirdVox, Freefield1010, Warblr), with extras from Xeno-canto, ESC, and FSC.
-
-Download the dataset here:
 
 ## 🧪 Training & Experiments
 
 This repository includes:
 
+###TODO
 - Training pipelines for all model families
 - Baseline accuracy benchmarks for each spectrogram size
 - Ablation experiments (model width, mel bins, filter sizes, quantization)
