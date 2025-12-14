@@ -55,12 +55,11 @@ And yes — there’s a folder of example firmware templates for STM32 devices.
 ## 📦 Folder Structure
 
 ```
-/models          # Implementations of TinyCNN, DS-CNN, MobileNetV3-Tiny, etc.
-/data            # Loaders for the MyBAD mel-spectrogram .npy files
-/train           # Training and validation scripts
-/export          # TFLite, ONNX, Edge TPU export utilities
-/experiments     # Ablation studies & benchmark configs
-/deployment      # Example firmware for MCU inference
+/positive_label_curation          # Systematic downloading and extraction of Xeno-canto sound files
+/negative_label_curation          # Extraction of non-bird sounds from DCASE2018, ESC50, FSC22 and DataSEC
+/validation                       # Validation of MyBAD dataset on classic CNN
+/tinychirp                        # Training scripts of TinyChirp models on TinyChirp dataset for baseline setting
+/mybad-opti                       # Training scripts of optimized MyBAD models derived from TinyChirp baseline
 ```
 
 ## 🔍 Why This Matters
