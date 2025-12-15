@@ -46,7 +46,7 @@ python Stage4_find_flac_duplicates.py clips/ --recursive --output duplicate_pair
 - Automatically quarantines perfect duplicates (similarity ≥ 0.999999)
 - Reports near-duplicates (similarity ≥ 0.997) for manual review
 
-**See:** [Stage4_ALGO_DOCUMENT.md](./Stage4_ALGO_DOCUMENT.md) for detailed algorithm documentation.
+**See:** [Stage4_duplicate_detection_algorithm_documentation.md](./Stage4_Algo Document) for detailed algorithm documentation.
 
 ### Stage 5: Extract Clips
 **Script:** `Stage5_extract_3s_clips_from_flac.py`
