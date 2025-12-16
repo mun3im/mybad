@@ -1,23 +1,47 @@
 #!/usr/bin/env python3
 """
-extract_clips_from_flac_updated.py
+Stage5_extract_3s_clips_from_flac.py
 
-Scan an input folder tree produced by xc_convert_to_16k_flac and extract 3.0s FLAC
+Scan an input folder tree produced by xc_convert_to_16k_flac and extract 3.0s WAV
 chunks (16 kHz, PCM_16).
 
-Key changes from the original script you provided:
- - Writes 3s chunks as FLAC (not WAV).
+Key features:
+ - Writes 3s chunks as WAV files.
  - Ensures the logged RMS is the RMS of the saved 3s clip *after* any clipping correction.
- - Reports the total number of clips written at the end.
- - Keeps dry-run behavior but still reports counts for the dry-run.
+ - Guarantees at least one sample per file (picks best if none exceed threshold).
+ - Uses dual tqdm progress bars: one for species, one for files within each species.
+ - Minimal verbose output for clean execution.
 
-Usage example (same CLI flags as before):
-  python extract_clips_from_flac_updated.py \
-    --inroot /Volumes/Evo/XC-All-Malaysian-Birds_flac \
-    --outroot /Volumes/Evo/XC-All-Malaysian-Birds_clips \
-    --threshold 0.003 \
-    --csv clips_log.csv \
-    [--guarantee] [--dry-run] [--flatten]
+TWO WORKFLOWS:
+
+1. RMS-ONLY WORKFLOW (Quick & Dirty):
+   - Selects top N clips (default 25,000) by RMS energy; rest go to quarantine
+   - Final dataset ready immediately after Stage5
+   - Usage:
+     python Stage5_extract_3s_clips_from_flac.py \
+       --inroot /path/to/flac \
+       --outroot /path/to/clips \
+       --threshold 0.001 \
+       --csv clips_log.csv \
+       --max-clips 25000
+
+2. BALANCED WORKFLOW (Ecologically Diverse):
+   - Keep ALL clips, no quarantining
+   - Proceed to Stage6 for species-level balancing
+   - Usage:
+     python Stage5_extract_3s_clips_from_flac.py \
+       --inroot /path/to/flac \
+       --outroot /path/to/clips \
+       --threshold 0.001 \
+       --csv clips_log.csv \
+       --no-quarantine
+
+     Then run Stage6:
+     python Stage6_balance_species.py \
+       --csv clips_log.csv \
+       --outroot /path/to/clips \
+       --output balanced_clips.csv \
+       --target-size 16000
 """
 
 from pathlib import Path
@@ -33,6 +57,7 @@ import soundfile as sf
 import librosa
 from io import BytesIO
 import pandas as pd
+from tqdm import tqdm
 
 # ---------------- CONFIG / DEFAULTS ----------------
 DEFAULT_SR = 16000  # final sampling rate (Hz)
@@ -43,7 +68,7 @@ SOFT_LIMIT_ALPHA = 5.0   # soft limiter shape parameter
 MIN_SEPARATION_SEC = 1.5  # minimum temporal separation between chosen chunks
 # ---------------------------------------------------
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger("extract_clips")
 
 # -------- helper utilities --------
@@ -52,6 +77,17 @@ def extract_xc_id_from_name(name: str) -> Optional[str]:
     import re
     m = re.search(r'xc(\d+)', name, flags=re.IGNORECASE)
     return m.group(1) if m else None
+
+
+def extract_xc_quality(name: str) -> str:
+    """
+    Extract XC quality rating from filename.
+    Format: xc{id}_{quality} where quality is A, B, C, D, or U
+    Returns 'U' if not found.
+    """
+    import re
+    m = re.search(r'xc\d+_([A-DU])', name, flags=re.IGNORECASE)
+    return m.group(1).upper() if m else 'U'
 
 
 def rms_of_segment(y: np.ndarray) -> float:
@@ -171,10 +207,11 @@ def choose_best_chunks_any(starts: np.ndarray, rms_vals: np.ndarray, num_chunks:
     return chosen
 
 # -------- main processing per file --------
-def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshold: float, guarantee: bool,
-                 csv_records: List[dict], dry_run: bool = False, flatten: bool = False) -> Tuple[List[dict], int]:
+def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshold: float,
+                 csv_records: List[dict], dry_run: bool = False) -> Tuple[List[dict], int]:
     """
     Process a single FLAC file and return updated csv_records and number of clips saved.
+    Always guarantees at least one clip per file (picks best if none exceed threshold).
     """
     saved_count = 0
     # read file (librosa load uses soundfile backend by default)
@@ -185,8 +222,11 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
         return csv_records, saved_count
 
     duration = librosa.get_duration(y=y, sr=sr)
-    base_name = path.stem  # e.g. xc12345
+    base_name = path.stem  # e.g. xc12345_A
     xc_id = extract_xc_id_from_name(base_name) or "unknown"
+    quality = extract_xc_quality(base_name)
+    file_duration = duration  # Store for CSV
+
     # Determine expected number of chunks and offset rule (3s windows)
     if duration < 3.0:
         chunks_expected = 0
@@ -206,15 +246,12 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
     step_samples = int(round(STEP_SEC * sr))
     starts, rms_vals = sliding_windows_rms(y, sr, WINDOW_SEC, STEP_SEC)
 
-    # When guarantee + flatten: ignore threshold to generate more clips for quarantine
-    # Otherwise: use threshold to filter clips
-    effective_threshold = 0.0 if (guarantee and flatten) else threshold
+    # choose diverse chunks above threshold
+    candidates = choose_diverse_chunks(starts, rms_vals, sr, chunks_expected, MIN_SEPARATION_SEC, threshold)
 
-    # choose diverse chunks above effective threshold
-    candidates = choose_diverse_chunks(starts, rms_vals, sr, chunks_expected, MIN_SEPARATION_SEC, effective_threshold)
-
-    # if not enough candidates and guarantee is requested, pick best remaining (allow below threshold)
-    if len(candidates) < chunks_expected and guarantee:
+    # if not enough candidates, pick best remaining (allow below threshold)
+    # This guarantees at least one sample per file
+    if len(candidates) < chunks_expected:
         fallback = choose_best_chunks_any(starts, rms_vals, chunks_expected, sr, MIN_SEPARATION_SEC)
         # merge unique starts, prioritize previously chosen ones
         chosen_dict = {s: rms for s, rms in candidates}
@@ -223,9 +260,23 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
                 chosen_dict[s] = rms
         candidates = sorted([(s, chosen_dict[s]) for s in chosen_dict], key=lambda x: x[0])
 
-    # if still empty and not guarantee, we may skip
+    # if still empty, skip this file (silently record in CSV only)
     if not candidates:
-        logger.info(f"No candidate chunks >= threshold for {path.name}; skipping (set --guarantee to force one)")
+        # Record in CSV for tracking but don't print warning
+        csv_records.append({
+            "xc_id": xc_id,
+            "species": species,
+            "quality": quality,
+            "source_file": str(path),
+            "source_duration_sec": round(file_duration, 2),
+            "clip_start_ms": 0,
+            "clip_start_sec": 0.0,
+            "clip_duration_sec": 0.0,
+            "rms_energy": 0.0,
+            "was_clipped": False,
+            "out_filename": "SKIPPED_TOO_SHORT",
+            "out_path": "SKIPPED_TOO_SHORT"
+        })
         return csv_records, saved_count
 
     # Save chosen chunks as FLAC with start_ms suffix
@@ -233,25 +284,25 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
         start_sec = s_samples / sr
         start_ms = int(round(start_sec * 1000.0))
 
-        if flatten:
-            out_fname = f"{base_name}_{start_ms}.wav"
-            out_path = out_root / out_fname
-        else:
-            out_species_dir = out_root / species
-            out_species_dir.mkdir(parents=True, exist_ok=True)
-            out_fname = f"{base_name}_{start_ms}.wav"
-            out_path = out_species_dir / out_fname
+        # Flatten output - all files in output root (no subdirectories)
+        out_fname = f"{base_name}_{start_ms}.wav"
+        out_path = out_root / out_fname
 
         if dry_run:
-            logger.info(f"[DRY] Would save {out_path} (start_s={start_sec:.3f}, pre_rms={rms_pre:.6f})")
             # For dry-run, keep the precomputed rms as best estimate
             csv_records.append({
-                "source_file": str(path),
+                "xc_id": xc_id,
                 "species": species,
-                "start_ms": start_ms,
-                "rms": float(rms_pre),
-                "out_path": str(out_path),
-                "id": xc_id
+                "quality": quality,
+                "source_file": str(path),
+                "source_duration_sec": round(file_duration, 2),
+                "clip_start_ms": start_ms,
+                "clip_start_sec": round(start_sec, 2),
+                "clip_duration_sec": WINDOW_SEC,
+                "rms_energy": float(rms_pre),
+                "was_clipped": False,
+                "out_filename": out_fname,
+                "out_path": str(out_path)
             })
             saved_count += 1
             continue
@@ -263,7 +314,6 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
 
         clipped = is_clipped(seg, threshold=0.9999)
         if clipped:
-            logger.info(f"Clipping detected in {path.name} at start {start_sec:.3f}s (pre RMS {rms_pre:.6f}) - applying correction")
             seg = peak_scale_and_soft_limit(seg, ceiling=CLIPPING_CEILING, alpha=SOFT_LIMIT_ALPHA)
 
         # ensure dtype float32
@@ -274,14 +324,19 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
         try:
             # write wav (soundfile infers format from extension too)
             sf.write(str(out_path), seg_to_write, sr, format='WAV', subtype='PCM_16')
-            logger.info(f"Saved: {out_path} (start {start_sec:.3f}s, rms={final_rms:.6f}, clipped={clipped})")
             csv_records.append({
-                "source_file": str(path),
+                "xc_id": xc_id,
                 "species": species,
-                "start_ms": start_ms,
-                "rms": float(final_rms),
-                "out_path": str(out_path),
-                "id": xc_id
+                "quality": quality,
+                "source_file": str(path),
+                "source_duration_sec": round(file_duration, 2),
+                "clip_start_ms": start_ms,
+                "clip_start_sec": round(start_sec, 2),
+                "clip_duration_sec": WINDOW_SEC,
+                "rms_energy": float(final_rms),
+                "was_clipped": clipped,
+                "out_filename": out_fname,
+                "out_path": str(out_path)
             })
             saved_count += 1
         except Exception as e:
@@ -290,36 +345,55 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
     return csv_records, saved_count
 
 
-def postprocess_flatten_quarantine(csv_path: Path, output_root: Path, dry_run: bool = False):
-    """If flatten mode was used, enforce 25k loudest clips; rest go to quarantine."""
-    logger.info("Running post-processing for --flatten: sorting by RMS and quarantining excess clips...")
+def select_top_clips_by_rms(csv_path: Path, output_root: Path, max_clips: int = 25000, no_quarantine: bool = False, dry_run: bool = False):
+    """
+    Select top N clips by RMS energy; rest go to quarantine.
+
+    Two workflows:
+    1. RMS-only workflow: Apply max_clips cap and quarantine excess clips
+    2. Balanced workflow (--no-quarantine): Keep all clips for Stage6 species balancing
+    """
+    print(f"\n{'='*60}")
+    print("Post-processing: RMS-based selection")
+    print(f"{'='*60}")
 
     df = pd.read_csv(csv_path)
     total_clips = len(df)
-    logger.info(f"Total clips generated: {total_clips}")
+    print(f"Total clips generated: {total_clips:,}")
 
-    if total_clips <= 25000:
-        logger.info("≤25,000 clips — no quarantining needed.")
+    if no_quarantine:
+        print(f"\n--no-quarantine flag set: Keeping all {total_clips:,} clips for Stage6 balancing")
+        print(f"No quarantining will be performed.")
+        print(f"Proceed to Stage6 for species-level balancing.")
+        return
+
+    # RMS-only workflow: apply max_clips cap
+    print(f"\nApplying RMS-only workflow with max_clips={max_clips:,}")
+
+    if total_clips <= max_clips:
+        print(f"≤{max_clips:,} clips — no quarantining needed.")
+        print(f"Final clip count: {total_clips:,}")
         return
 
     # Sort by RMS descending
-    df = df.sort_values(by="rms", ascending=False).reset_index(drop=True)
+    df = df.sort_values(by="rms_energy", ascending=False).reset_index(drop=True)
 
     # Split into keep and quarantine
-    keep_df = df.head(25000)
-    quarantine_df = df.iloc[25000:]
+    keep_df = df.head(max_clips)
+    quarantine_df = df.iloc[max_clips:]
 
     quarantine_dir = output_root / "quarantine"
     if not dry_run:
         quarantine_dir.mkdir(exist_ok=True)
 
-    # Move quarantined files
-    for _, row in quarantine_df.iterrows():
+    # Move quarantined files with progress bar
+    print(f"\nMoving {len(quarantine_df):,} clips to quarantine...")
+    for _, row in tqdm(quarantine_df.iterrows(), total=len(quarantine_df), desc="Quarantining", unit="file"):
         src_path = Path(row["out_path"])
         dst_path = quarantine_dir / src_path.name
         if src_path.exists():
             if dry_run:
-                logger.info(f"[DRY] Would move {src_path} → {dst_path}")
+                pass  # Silent in dry-run
             else:
                 try:
                     src_path.rename(dst_path)
@@ -328,89 +402,114 @@ def postprocess_flatten_quarantine(csv_path: Path, output_root: Path, dry_run: b
         else:
             logger.warning(f"Quarantine file not found (already moved?): {src_path}")
 
-    # Overwrite CSV to keep only top 25k
+    # Save kept clips CSV (overwrite with only top clips)
     if not dry_run:
         keep_df.to_csv(csv_path, index=False)
-        logger.info(f"CSV updated to contain only top 25,000 loudest clips (saved to {csv_path})")
+        print(f"\nCSV updated to contain only top {max_clips:,} loudest clips")
     else:
-        logger.info(f"[DRY] Would truncate CSV to 25,000 rows (top RMS)")
+        print(f"\n[DRY] Would truncate CSV to {max_clips:,} rows (top RMS)")
 
-    logger.info(f"Quarantined {len(quarantine_df)} clips into {quarantine_dir}")
+    print(f"Quarantined {len(quarantine_df):,} clips into {quarantine_dir}")
+    print(f"Final clip count: {max_clips:,}")
+    print(f"\nRMS-only workflow complete. Dataset ready for use.")
 
 # -------- main loop over folders --------
 def main():
     parser = argparse.ArgumentParser(description="Extract 3s WAV clips from converted FLAC files (16k) with smart selection.")
     parser.add_argument("--inroot", required=True, help="Root folder containing species subfolders with FLAC files")
-    parser.add_argument("--outroot", required=True, help="Destination root for extracted FLAC clips")
-    parser.add_argument("--threshold", type=float, default=0.003, help="RMS threshold to consider a 3s window non-silent (default 0.003)")
+    parser.add_argument("--outroot", required=True, help="Destination root for extracted WAV clips")
+    parser.add_argument("--threshold", type=float, default=0.001, help="RMS threshold to consider a 3s window non-silent (default 0.001, effectively captures all non-silent audio)")
     parser.add_argument("--sr", type=int, default=DEFAULT_SR, help="Output sampling rate, default 16000")
     parser.add_argument("--csv", default="clips_log.csv", help="CSV path to write clip metadata")
-    parser.add_argument("--guarantee", action="store_true", help="Guarantee at least one saved clip per file (pick best if none exceed threshold)")
     parser.add_argument("--dry-run", action="store_true", help="Do not write files; only simulate and write csv entries")
-    parser.add_argument("--flatten", action="store_true",
-                        help="Place all output clips directly in output-root (no species subfolders)")
+    parser.add_argument("--max-clips", type=int, default=None, help="Maximum number of clips to keep (by RMS energy). If not specified, defaults to (total_clips // 1000) * 1000. Ignored if --no-quarantine is set.")
+    parser.add_argument("--no-quarantine", action="store_true", help="Skip quarantining. Keep all clips for Stage6 species balancing. Use this for balanced workflow.")
     args = parser.parse_args()
 
     input_root = Path(args.inroot)
     output_root = Path(args.outroot)
     sr_out = int(args.sr)
     threshold = float(args.threshold)
-    guarantee = bool(args.guarantee)
     csv_path = Path(args.csv)
     dry_run = bool(args.dry_run)
+    max_clips = int(args.max_clips) if args.max_clips is not None else None
+    no_quarantine = bool(args.no_quarantine)
 
     if not input_root.exists():
-        logger.error(f"Input root does not exist: {input_root}")
+        print(f"ERROR: Input root does not exist: {input_root}")
         sys.exit(2)
     output_root.mkdir(parents=True, exist_ok=True)
 
-    # iterate species subfolders (one level)
+    # Collect all species directories
+    species_dirs = [p for p in sorted(input_root.iterdir()) if p.is_dir()]
+    total_species = len(species_dirs)
+
+    # Determine workflow
+    workflow = "Balanced (→ Stage6)" if no_quarantine else "RMS-only"
+
+    print(f"\n{'='*60}")
+    print(f"Stage 5: Extracting 3s WAV clips from FLAC files")
+    print(f"{'='*60}")
+    print(f"Workflow: {workflow}")
+    print(f"Total species to process: {total_species}")
+    print(f"Input root: {input_root}")
+    print(f"Output root: {output_root}")
+    print(f"RMS threshold: {threshold}")
+    if not no_quarantine:
+        if max_clips is not None:
+            print(f"Max clips to keep: {max_clips:,}")
+        else:
+            print(f"Max clips to keep: Auto-calculated after extraction")
+    print(f"{'='*60}\n")
+
+    # Main processing loop with dual progress bars
     csv_records: List[dict] = []
     total_saved = 0
-    species_dirs = [p for p in sorted(input_root.iterdir()) if p.is_dir()]
-    logger.info(f"Found {len(species_dirs)} species folders under {input_root}")
 
-    for species_dir in species_dirs:
+    # Outer progress bar for species
+    species_pbar = tqdm(species_dirs, desc="Species", unit="species", position=0)
+
+    for species_dir in species_pbar:
         species_name = species_dir.name
+        species_pbar.set_postfix_str(f"Current: {species_name[:30]}")
+
         flac_files = sorted([p for p in species_dir.glob("*.flac")])
-        logger.info(f"Processing species {species_name}: {len(flac_files)} files")
-        for i, fpath in enumerate(flac_files, start=1):
-            logger.debug(f"Processing file {i}/{len(flac_files)}: {fpath.name}")
+
+        # Inner progress bar for files within species
+        file_pbar = tqdm(flac_files, desc=f"  Files in {species_name[:25]}", unit="file", position=1, leave=False)
+
+        for fpath in file_pbar:
             try:
                 csv_records, saved = process_file(
-                    fpath, species_name, output_root, sr_out, threshold, guarantee,
-                    csv_records, dry_run=dry_run, flatten=args.flatten
+                    fpath, species_name, output_root, sr_out, threshold,
+                    csv_records, dry_run=dry_run
                 )
                 total_saved += saved
             except Exception as e:
-                logger.exception(f"Unexpected error processing {fpath}: {e}")
+                logger.error(f"Unexpected error processing {fpath}: {e}")
 
-            # optional: flush CSV periodically to avoid data loss for long runs
-            if len(csv_records) >= 1000:
-                # append to disk and clear
-                df_partial = pd.DataFrame(csv_records)
-                if csv_path.exists():
-                    df_partial.to_csv(csv_path, mode="a", header=False, index=False)
-                else:
-                    df_partial.to_csv(csv_path, mode="w", header=True, index=False)
-                logger.info(f"Flushed {len(csv_records)} records to {csv_path}")
-                csv_records.clear()
+        file_pbar.close()
 
-    # Final write of any remaining records (as before)
+    species_pbar.close()
+
+    # Write all records to CSV (fresh file every run, no appending)
     if csv_records:
-        df_last = pd.DataFrame(csv_records)
-        if csv_path.exists():
-            df_last.to_csv(csv_path, mode="a", header=False, index=False)
-        else:
-            df_last.to_csv(csv_path, mode="w", header=True, index=False)
-        logger.info(f"Wrote final {len(csv_records)} records to {csv_path}")
+        df_all = pd.DataFrame(csv_records)
+        df_all.to_csv(csv_path, mode="w", header=True, index=False)
 
-    # >>> NEW: Post-processing for --flatten <<<
-    if args.flatten:
-        postprocess_flatten_quarantine(csv_path, output_root, dry_run=dry_run)
+    print(f"\n{'='*60}")
+    print(f"Extraction complete!")
+    print(f"{'='*60}")
+    print(f"Total clips generated: {total_saved:,}")
+    print(f"{'='*60}\n")
 
-    logger.info(f"Processing complete. Total clips written: {total_saved}")
-    print(f"Total clips written: {total_saved}")
+    # Calculate default max_clips if not specified: (total_clips // 1000) * 1000
+    if max_clips is None:
+        max_clips = (total_saved // 1000) * 1000
+        print(f"Auto-calculated max_clips: {max_clips:,} (rounded down to nearest 1000)")
+
+    # Post-processing: Select top clips by RMS (or skip if balanced workflow)
+    select_top_clips_by_rms(csv_path, output_root, max_clips=max_clips, no_quarantine=no_quarantine, dry_run=dry_run)
 
 if __name__ == "__main__":
     main()

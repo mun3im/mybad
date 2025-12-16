@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """
-xc_fetch_country_birds.py
+Stage1_xc_fetch_bird_metadata.py
 
-Fetch ALL Xeno-Canto v3 recordings for a given country (Malaysia or Singapore),
+Fetch ALL Xeno-Canto v3 recordings for Southeast Asian countries sharing borders with Malaysia,
 filter to records whose metadata indicates they are birds, and save full metadata to CSV.
+
+Geographic scope:
+  - Malaysia (primary)
+  - Singapore (shares border)
+  - Indonesia (shares borders in Borneo and maritime)
+  - Brunei (shares border in Borneo)
+  - Thailand (shares northern border)
 
 Requirements:
   - requests
@@ -12,11 +19,16 @@ Requirements:
 Set XENO_API_KEY environment variable before running:
   export XENO_API_KEY="your_api_key_here"
 
-# Fetch Malaysia birds
-python xc_fetch_country_birds.py --country Malaysia --out-csv xc_my_birds.csv
+Usage examples:
 
-# Fetch Singapore birds
-python xc_fetch_country_birds.py --country Singapore --out-csv xc_sg_birds.csv
+# Fetch single country
+python Stage1_xc_fetch_bird_metadata.py --country Malaysia --out-csv xc_my_birds.csv
+
+# Fetch all Southeast Asian countries (recommended for maximizing dataset)
+python Stage1_xc_fetch_bird_metadata.py --country all --out-csv xc_sea_birds.csv
+
+# Fetch multiple specific countries
+python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Singapore Indonesia --out-csv xc_multi.csv
 
 """
 
@@ -30,7 +42,8 @@ import pandas as pd
 import argparse
 
 # ------------ CONFIG -------------
-OUT_CSV_DEFAULT = "xc_country_birds.csv"
+SUPPORTED_COUNTRIES = ["Malaysia", "Singapore", "Indonesia", "Brunei", "Thailand"]
+OUT_CSV_DEFAULT = "xc_sea_birds.csv"  # Southeast Asia birds
 BASE_URL = "https://xeno-canto.org/api/3/recordings"
 RATE_LIMIT_DELAY = 0.2
 MAX_RETRIES = 4
@@ -39,7 +52,7 @@ GROUP_FIELD_CANDIDATES = ["grp", "group", "animal", "type", "kind"]
 # ----------------------------------
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
-logger = logging.getLogger("xc_country_birds")
+logger = logging.getLogger("xc_sea_birds")
 
 
 def request_with_retries(url: str, params: Dict[str, str], headers: Dict[str, str], retries: int = 0) -> Optional[requests.Response]:
@@ -149,11 +162,36 @@ def save_records(records: List[Dict], out_csv: str) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fetch Xeno-Canto bird metadata for a country")
-    parser.add_argument("--country", choices=["Malaysia", "Singapore", "Brunei"], default="Malaysia",
-                        help="Country to fetch bird records for")
+    parser = argparse.ArgumentParser(
+        description="Fetch Xeno-Canto bird metadata for Southeast Asian countries",
+        epilog="""
+Examples:
+  # Fetch all supported countries (Malaysia, Singapore, Indonesia, Brunei, Thailand)
+  python Stage1_xc_fetch_bird_metadata.py --country all --out-csv xc_sea_birds.csv
+
+  # Fetch single country
+  python Stage1_xc_fetch_bird_metadata.py --country Malaysia --out-csv xc_my_birds.csv
+
+  # Fetch specific countries
+  python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Indonesia Thailand --out-csv xc_multi.csv
+        """,
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--country",
+                      choices=SUPPORTED_COUNTRIES + ["all"],
+                      help="Single country to fetch (or 'all' for all supported countries)")
+    group.add_argument("--countries",
+                      nargs='+',
+                      choices=SUPPORTED_COUNTRIES,
+                      help="Multiple countries to fetch")
+
     parser.add_argument("--out-csv", default=OUT_CSV_DEFAULT,
-                        help="Output CSV filename")
+                        help="Output CSV filename (default: xc_sea_birds.csv)")
+    parser.add_argument("--add-country-column", action="store_true",
+                        help="Add 'fetch_country' column to track which country query returned each record")
+
     args = parser.parse_args()
 
     api_key = os.environ.get("XENO_API_KEY")
@@ -161,10 +199,52 @@ def main():
         logger.error("No XENO_API_KEY found. Set environment variable XENO_API_KEY and retry.")
         sys.exit(2)
 
-    logger.info(f"Starting Xeno-Canto {args.country} -> bird records fetch")
-    records = fetch_country_birds(api_key=api_key, country=args.country)
-    save_records(records, args.out_csv)
-    logger.info("Done.")
+    # Determine which countries to fetch
+    if args.country:
+        countries = SUPPORTED_COUNTRIES if args.country == "all" else [args.country]
+    else:
+        countries = args.countries
+
+    logger.info(f"Starting Xeno-Canto bird records fetch for: {', '.join(countries)}")
+
+    all_records = []
+    for country in countries:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"Fetching records for: {country}")
+        logger.info(f"{'='*60}")
+        records = fetch_country_birds(api_key=api_key, country=country)
+
+        # Optionally tag records with source country
+        if args.add_country_column:
+            for rec in records:
+                rec['fetch_country'] = country
+
+        all_records.extend(records)
+        logger.info(f"Total records so far: {len(all_records):,}")
+
+    # Remove duplicates based on XC ID (recordings may appear in multiple countries)
+    logger.info(f"\nDeduplicating records by XC ID...")
+    df = pd.DataFrame(all_records)
+    if not df.empty:
+        initial_count = len(df)
+        df = df.drop_duplicates(subset=['id'], keep='first')
+        final_count = len(df)
+        logger.info(f"Removed {initial_count - final_count:,} duplicate records")
+
+        # Save deduplicated records
+        df.to_csv(args.out_csv, index=False)
+        logger.info(f"\nWrote {final_count:,} unique bird records to {args.out_csv}")
+
+        # Print country breakdown
+        if 'cnt' in df.columns:
+            logger.info(f"\nRecords by country (based on 'cnt' field in metadata):")
+            country_counts = df['cnt'].value_counts()
+            for country, count in country_counts.head(10).items():
+                logger.info(f"  {country}: {count:,}")
+    else:
+        logger.warning("No records to save.")
+
+    logger.info("\nDone.")
 
 
 if __name__ == "__main__":

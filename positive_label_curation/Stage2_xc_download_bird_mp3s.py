@@ -366,8 +366,8 @@ def main():
 
     global DOWNLOAD_LOG, OUTPUT_CSV, FAILED_CSV
     DOWNLOAD_LOG = os.path.join(out_root, "download_log.csv")
-    OUTPUT_CSV = os.path.join(out_root, "successful_downloads.csv")
-    FAILED_CSV = os.path.join(out_root, "failed_downloads.csv")
+    OUTPUT_CSV = os.path.join(out_root, "Stage2_successful_downloads.csv")
+    FAILED_CSV = os.path.join(out_root, "Stage2_failed_downloads.csv")
 
     logger.info(f"Output root: {out_root}")
     ensure_dir(out_root)
