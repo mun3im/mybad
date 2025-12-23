@@ -257,20 +257,54 @@ def balance_species(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Balance species representation through undersampling for ecological diversity"
+        description="Stage 6: Balance species through undersampling for ecological diversity",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+PREREQUISITE:
+  Stage5 must be run with --no-quarantine to keep all clips available
+
+STRATEGY:
+  - Calculates per-species cap based on target size
+  - Prioritizes recording diversity (unique XC IDs)
+  - Prefers higher quality grades (A > B > C > D)
+  - Within same quality, prefers higher RMS energy
+
+EXAMPLES:
+  # Balance with auto-calculated target (75% of clips, rounded to nearest 1000)
+  python Stage6_balance_species.py --input-csv clips_log.csv --outroot clips/ \\
+    --output-csv balanced_clips.csv
+
+  # Balance with specific target size
+  python Stage6_balance_species.py --input-csv clips_log.csv --outroot clips/ \\
+    --output-csv balanced_clips.csv --target-size 16000 --plots balance.png
+        """
     )
-    parser.add_argument("--csv", required=True, help="Input CSV with all clips (from Stage5)")
-    parser.add_argument("--outroot", required=True, help="Root directory containing clips and quarantine folder")
-    parser.add_argument("--output", default="balanced_clips.csv", help="Output CSV with balanced dataset")
-    parser.add_argument("--target-size", type=int, default=None, help="Target final dataset size. If not specified, defaults to int(total_clips * 0.75 / 1000) * 1000")
-    parser.add_argument("--plots", default="species_balance.png", help="Output path for histogram plots")
+
+    # Required arguments
+    parser.add_argument("--input-csv", required=True, metavar="FILE",
+                        help="Input CSV with all clips from Stage5")
+    parser.add_argument("--outroot", required=True, metavar="DIR",
+                        help="Root directory containing audio clips")
+
+    # Output options
+    parser.add_argument("--output-csv", default="balanced_clips.csv", metavar="FILE",
+                        help="Output CSV with balanced dataset (default: balanced_clips.csv)")
+    parser.add_argument("--plots", default="species_balance.png", metavar="FILE",
+                        help="Output PNG with distribution plots (default: species_balance.png)")
+
+    # Processing options
+    parser.add_argument("--target-size", type=int, default=None, metavar="N",
+                        help="Target dataset size. Auto: int(total*0.75/1000)*1000")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show statistics without saving output files")
     args = parser.parse_args()
 
-    csv_path = Path(args.csv)
+    csv_path = Path(args.input_csv)
     outroot = Path(args.outroot)
-    output_csv = Path(args.output)
+    output_csv = Path(args.output_csv)
     target_size = args.target_size
     plots_path = Path(args.plots)
+    dry_run = args.dry_run
 
     if not csv_path.exists():
         print(f"ERROR: CSV file not found: {csv_path}")
@@ -388,20 +422,24 @@ def main():
     print(f"Samples removed: {len(df_all) - len(df_balanced):,}")
 
     # Save balanced dataset
-    df_balanced.to_csv(output_csv, index=False)
-    print(f"\nBalanced dataset saved to: {output_csv}")
+    if dry_run:
+        print(f"\n[DRY RUN] Would save balanced dataset to: {output_csv}")
+        print(f"[DRY RUN] Would save distribution plots to: {plots_path}")
+    else:
+        df_balanced.to_csv(output_csv, index=False)
+        print(f"\nBalanced dataset saved to: {output_csv}")
 
-    # Generate histograms
-    print("\nGenerating distribution histograms...")
-    plot_species_distribution(
-        pre_species_counts,
-        post_species_counts,
-        plots_path,
-        pre_gini,
-        post_gini,
-        pre_mean,
-        post_mean
-    )
+        # Generate histograms
+        print("\nGenerating distribution histograms...")
+        plot_species_distribution(
+            pre_species_counts,
+            post_species_counts,
+            plots_path,
+            pre_gini,
+            post_gini,
+            pre_mean,
+            post_mean
+        )
 
     print(f"\n{'='*60}")
     print("Species balancing complete!")

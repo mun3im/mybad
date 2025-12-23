@@ -22,13 +22,13 @@ Set XENO_API_KEY environment variable before running:
 Usage examples:
 
 # Fetch single country
-python Stage1_xc_fetch_bird_metadata.py --country Malaysia --out-csv xc_my_birds.csv
+python Stage1_xc_fetch_bird_metadata.py --country Malaysia --output-csv xc_my_birds.csv
 
 # Fetch all Southeast Asian countries (recommended for maximizing dataset)
-python Stage1_xc_fetch_bird_metadata.py --country all --out-csv xc_sea_birds.csv
+python Stage1_xc_fetch_bird_metadata.py --country all --output-csv xc_sea_birds.csv
 
 # Fetch multiple specific countries
-python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Singapore Indonesia --out-csv xc_multi.csv
+python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Singapore Indonesia --output-csv xc_multi.csv
 
 """
 
@@ -165,29 +165,33 @@ def main():
     parser = argparse.ArgumentParser(
         description="Fetch Xeno-Canto bird metadata for Southeast Asian countries",
         epilog="""
-Examples:
+EXAMPLES:
   # Fetch all supported countries (Malaysia, Singapore, Indonesia, Brunei, Thailand)
-  python Stage1_xc_fetch_bird_metadata.py --country all --out-csv xc_sea_birds.csv
+  python Stage1_xc_fetch_bird_metadata.py --country all --output-csv xc_sea_birds.csv
 
   # Fetch single country
-  python Stage1_xc_fetch_bird_metadata.py --country Malaysia --out-csv xc_my_birds.csv
+  python Stage1_xc_fetch_bird_metadata.py --country Malaysia --output-csv xc_my_birds.csv
 
   # Fetch specific countries
-  python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Indonesia Thailand --out-csv xc_multi.csv
+  python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Indonesia Thailand --output-csv xc_multi.csv
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
 
+    # Input options (country selection)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--country",
                       choices=SUPPORTED_COUNTRIES + ["all"],
+                      metavar="COUNTRY",
                       help="Single country to fetch (or 'all' for all supported countries)")
     group.add_argument("--countries",
                       nargs='+',
                       choices=SUPPORTED_COUNTRIES,
+                      metavar="COUNTRY",
                       help="Multiple countries to fetch")
 
-    parser.add_argument("--out-csv", default=OUT_CSV_DEFAULT,
+    # Output options
+    parser.add_argument("--output-csv", default=OUT_CSV_DEFAULT, metavar="FILE",
                         help="Output CSV filename (default: xc_sea_birds.csv)")
     parser.add_argument("--add-country-column", action="store_true",
                         help="Add 'fetch_country' column to track which country query returned each record")
@@ -232,8 +236,8 @@ Examples:
         logger.info(f"Removed {initial_count - final_count:,} duplicate records")
 
         # Save deduplicated records
-        df.to_csv(args.out_csv, index=False)
-        logger.info(f"\nWrote {final_count:,} unique bird records to {args.out_csv}")
+        df.to_csv(args.output_csv, index=False)
+        logger.info(f"\nWrote {final_count:,} unique bird records to {args.output_csv}")
 
         # Print country breakdown
         if 'cnt' in df.columns:

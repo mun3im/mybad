@@ -7,8 +7,9 @@ Moves perfect duplicates (1.000 similarity) to a quarantine folder.
 import argparse
 import sys
 import shutil
+import csv
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Set
 
 import numpy as np
 import librosa
@@ -24,7 +25,7 @@ MIN_DURATION = 3.0
 MEAN_SIM_THRESHOLD = 0.997
 MIN_SIM_THRESHOLD = 0.985
 P5_SIM_THRESHOLD = 0.992
-PERFECT_DUPLICATE_THRESHOLD = 0.999999  # Account for floating-point precision
+PERFECT_DUPLICATE_THRESHOLD = 0.999
 
 
 # --------------------------------------------
@@ -169,51 +170,82 @@ class QuarantineManager:
         self.root = root
         self.quarantine_dir = root / "quarantine"
 
-    def quarantine_duplicates(self, perfect_duplicates: List[Tuple[Path, Path]], dry_run: bool = False) -> int:
+    @staticmethod
+    def extract_xc_number(filepath: Path) -> int:
+        """
+        Extract XC number from filename (e.g., 'xc123456_A.flac' -> 123456).
+        Returns 0 if no XC number found.
+        """
+        try:
+            name = filepath.stem.lower()
+            if name.startswith('xc'):
+                # Extract digits after 'xc' and before '_'
+                parts = name[2:].split('_')
+                if parts:
+                    return int(parts[0])
+        except (ValueError, IndexError):
+            pass
+        return 0
+
+    def quarantine_duplicates(self, perfect_duplicates: List[Tuple[Path, Path]], dry_run: bool = False) -> Tuple[int, Set[int]]:
         """
         Move one file from each perfect duplicate pair to quarantine.
-        Returns number of files moved (or would-be moved in dry-run).
+        Returns (number of files moved, set of quarantined XC numbers).
         """
         if not perfect_duplicates:
-            return 0
+            return 0, set()
 
         if not dry_run:
             self.quarantine_dir.mkdir(exist_ok=True)
         moved_count = 0
         moved_files = set()
+        quarantined_xc_numbers = set()
 
         print(f"\n{'[DRY RUN] Would quarantine' if dry_run else 'Quarantining'} {len(perfect_duplicates)} perfect duplicate pair(s)...")
 
         for file1, file2 in perfect_duplicates:
-            # Determine which file to move (prefer file2, but move file1 if file2 was already moved)
-            if file2 not in moved_files:
-                target_file = file2
-            elif file1 not in moved_files:
-                target_file = file1
+            # Quarantine the NEWER file (higher XC number), keep the older one
+            xc1 = self.extract_xc_number(file1)
+            xc2 = self.extract_xc_number(file2)
+
+            # Determine which file to quarantine based on XC number
+            if xc1 > xc2:
+                target_file = file1  # file1 is newer, quarantine it
+            elif xc2 > xc1:
+                target_file = file2  # file2 is newer, quarantine it
             else:
-                # Both files already moved in previous pairs, skip
+                # Same or no XC numbers, use original logic (prefer quarantining file2)
+                target_file = file2 if file2 not in moved_files else file1
+
+            # Skip if this file was already quarantined in a previous pair
+            if target_file in moved_files:
                 continue
 
             moved_files.add(target_file)
+
+            # Track XC number of quarantined file
+            xc_num = self.extract_xc_number(target_file)
+            if xc_num > 0:
+                quarantined_xc_numbers.add(xc_num)
 
             # Preserve subfolder structure in quarantine
             rel_path = target_file.relative_to(self.root)
             quarantine_target = self.quarantine_dir / rel_path
 
             if dry_run:
-                print(f"  [DRY RUN] Would move: {rel_path}")
+                print(f"  [DRY RUN] Would move: {rel_path} (XC{xc_num})")
             else:
                 quarantine_target.parent.mkdir(parents=True, exist_ok=True)
                 try:
                     shutil.move(str(target_file), str(quarantine_target))
                     moved_count += 1
-                    print(f"  Moved: {rel_path}")
+                    print(f"  Moved: {rel_path} (XC{xc_num})")
                 except Exception as e:
                     print(f"  Failed to move {rel_path}: {e}", file=sys.stderr)
 
         if dry_run:
-            return len(moved_files)
-        return moved_count
+            return len(moved_files), quarantined_xc_numbers
+        return moved_count, quarantined_xc_numbers
 
 
 class FileCollector:
@@ -251,6 +283,58 @@ class FileCollector:
             if subdir.is_dir():
                 candidates.extend(FileCollector._find_files(subdir, "*"))
         return candidates
+
+
+class UniqueFilesWriter:
+    """Creates CSV of unique (non-quarantined) files based on Stage2 CSV."""
+
+    @staticmethod
+    def create_unique_csv(
+            stage2_csv: Path,
+            quarantined_xc_numbers: Set[int],
+            output_csv: Path
+    ) -> Tuple[int, int]:
+        """
+        Create Stage4_unique_flacs.csv from Stage2_xc_successful_downloads.csv,
+        excluding quarantined files.
+        Returns (total_rows, kept_rows).
+        """
+        if not stage2_csv.exists():
+            print(f"Warning: {stage2_csv} not found. Skipping unique CSV creation.")
+            return 0, 0
+
+        kept_rows = []
+        total_rows = 0
+
+        with open(stage2_csv, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames
+
+            for row in reader:
+                total_rows += 1
+                try:
+                    xc_id = int(row.get('id', '0'))
+                except (ValueError, TypeError):
+                    # Keep rows with invalid IDs (shouldn't happen but be safe)
+                    kept_rows.append(row)
+                    continue
+
+                # Keep row if XC number is NOT in quarantined set
+                if xc_id not in quarantined_xc_numbers:
+                    kept_rows.append(row)
+
+        # Write unique files CSV
+        with open(output_csv, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(kept_rows)
+
+        print(f"\n✓ Created {output_csv}")
+        print(f"  Total files in Stage2: {total_rows}")
+        print(f"  Quarantined: {total_rows - len(kept_rows)}")
+        print(f"  Kept (unique): {len(kept_rows)}")
+
+        return total_rows, len(kept_rows)
 
 
 class ResultsWriter:
@@ -306,23 +390,38 @@ class ResultsWriter:
 def parse_arguments() -> argparse.Namespace:
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Find near-duplicate 3-second clips (WAV/FLAC) and quarantine perfect matches."
+        description="Stage 4: Find near-duplicate FLAC files and quarantine newer duplicates",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES:
+  # Find duplicates and quarantine newer ones, create unique files CSV
+  python Stage4_find_flac_duplicates.py /path/to/flacs \\
+    --stage2-csv Stage2_xc_successful_downloads.csv \\
+    --stage4-csv Stage4_unique_flacs.csv
+
+  # Dry run to see what would be quarantined
+  python Stage4_find_flac_duplicates.py /path/to/flacs \\
+    --stage2-csv Stage2_xc_successful_downloads.csv --dry-run
+
+  # Search recursively in all subdirectories
+  python Stage4_find_flac_duplicates.py /path/to/flacs --recursive \\
+    --stage2-csv Stage2_xc_successful_downloads.csv
+        """
     )
+
+    # Required arguments
     parser.add_argument(
         "directory",
         type=Path,
-        help="Root folder containing the clips"
+        metavar="DIR",
+        help="Root folder containing the FLAC files"
     )
+
+    # Processing options
     parser.add_argument(
         "--recursive", "-r",
         action="store_true",
         help="Search ALL subdirectories (not just one level deep)"
-    )
-    parser.add_argument(
-        "--output", "-o",
-        type=Path,
-        default="duplicate_pairs.txt",
-        help="Output file (default: duplicate_pairs.txt)"
     )
     parser.add_argument(
         "--no-quarantine",
@@ -333,6 +432,28 @@ def parse_arguments() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Simulate quarantining without actually moving files"
+    )
+
+    # Output options
+    parser.add_argument(
+        "--output", "-o",
+        type=Path,
+        default="duplicate_pairs.txt",
+        metavar="FILE",
+        help="Output file for duplicate pairs list (default: duplicate_pairs.txt)"
+    )
+    parser.add_argument(
+        "--stage2-csv",
+        type=Path,
+        metavar="FILE",
+        help="Path to Stage2_xc_successful_downloads.csv (for creating Stage4_unique_flacs.csv)"
+    )
+    parser.add_argument(
+        "--stage4-csv",
+        type=Path,
+        default="Stage4_unique_flacs.csv",
+        metavar="FILE",
+        help="Output path for Stage4_unique_flacs.csv (default: Stage4_unique_flacs.csv)"
     )
     return parser.parse_args()
 
@@ -362,9 +483,20 @@ def main():
 
     # Quarantine perfect duplicates
     moved_count = 0
+    quarantined_xc_numbers = set()
     if not args.no_quarantine and perfect_duplicates:
         manager = QuarantineManager(root)
-        moved_count = manager.quarantine_duplicates(perfect_duplicates, dry_run=args.dry_run)
+        moved_count, quarantined_xc_numbers = manager.quarantine_duplicates(
+            perfect_duplicates, dry_run=args.dry_run
+        )
+
+    # Create Stage4 unique files CSV if Stage2 CSV provided
+    if args.stage2_csv:
+        UniqueFilesWriter.create_unique_csv(
+            args.stage2_csv,
+            quarantined_xc_numbers,
+            args.stage4_csv
+        )
 
     # Write and display results
     ResultsWriter.write(args.output, root, similar_pairs, moved_count)

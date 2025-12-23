@@ -26,15 +26,15 @@ from urllib.parse import urlparse, unquote
 import csv
 
 # --------- Config defaults ----------
-DEFAULT_OUT_ROOT = "/Volumes/Evo/XC-All-Malaysian-Birds"
+DEFAULT_OUT_ROOT = "/Volumes/Evo/xc-asean-mp3s"
 RATE_LIMIT_DELAY = 0.1   # seconds between requests (politeness)
 MAX_RETRIES = 4
 REQUEST_TIMEOUT = 30     # seconds per request
 CHUNK_SIZE = 1024 * 64   # 64KB
 USER_AGENT = "xc_downloader/1.0 (+https://your.email@example.com)"
 DOWNLOAD_LOG = os.path.join(DEFAULT_OUT_ROOT, "Stage2_download_log.csv")
-OUTPUT_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_successful_downloads.csv")
-FAILED_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_failed_downloads.csv")
+OUTPUT_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_xc_successful_downloads.csv")
+FAILED_CSV = os.path.join(DEFAULT_OUT_ROOT, "Stage2_xc_failed_downloads.csv")
 MIN_BYTES_ACCEPTED = 1024  # 1 KB minimal acceptable file size (tweak as needed)
 # ------------------------------------
 
@@ -102,9 +102,10 @@ def download_url_to_path(url: str, out_path: str, max_retries: int = MAX_RETRIES
                     except Exception:
                         pass
                     logger.warning(f"{msg} for URL {url} (resp text start: {text_sample!r})")
-                    # 4xx likely won't succeed by retrying
-                    if 400 <= r.status_code < 500:
-                        return False, f"{msg} (client error)", 0, time.time() - start_time_total
+                    # 4xx and 5xx errors likely won't succeed by retrying
+                    if 400 <= r.status_code < 600:
+                        error_type = "client error" if r.status_code < 500 else "server error"
+                        return False, f"{msg} ({error_type})", 0, time.time() - start_time_total
                     attempt += 1
                     continue
 
@@ -167,6 +168,25 @@ def safe_str(val) -> str:
         return ""
 
 
+def parse_length_to_seconds(length_str: str) -> float:
+    """
+    Parse MM:SS format to total seconds. Returns 0.0 if invalid.
+    Examples: "1:23" -> 83.0, "0:45" -> 45.0
+    """
+    try:
+        parts = length_str.strip().split(":")
+        if len(parts) == 2:
+            minutes = int(parts[0])
+            seconds = int(parts[1])
+            return minutes * 60 + seconds
+        elif len(parts) == 1:
+            # Maybe just seconds?
+            return float(parts[0])
+    except Exception:
+        pass
+    return 0.0
+
+
 def append_log_row(log_path: str, row: dict):
     """Append one row (dict) to download_log.csv; create header if missing."""
     ensure_dir(os.path.dirname(log_path))
@@ -186,7 +206,7 @@ def append_output_csv_row(output_path: str, row: dict):
     write_header = not os.path.exists(output_path)
     with open(output_path, "a", newline="", encoding="utf-8") as of:
         writer = csv.DictWriter(of, fieldnames=[
-            "id", "en", "lat", "lon", "lic", "q", "length", "smp", "file_path"
+            "id", "en", "rec", "cnt", "lat", "lon", "lic", "q", "length", "smp"
         ])
         if write_header:
             writer.writeheader()
@@ -232,6 +252,8 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
         # safe extraction
         rec_id = safe_str(row.get("id", ""))
         en = safe_str(row.get("en", ""))
+        rec = safe_str(row.get("rec", ""))
+        cnt = safe_str(row.get("cnt", ""))
         file_url = safe_str(row.get("file", ""))
         q = safe_str(row.get("q", ""))
         lat = safe_str(row.get("lat", ""))
@@ -259,6 +281,17 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "status": "skip", "error": "no_url", "bytes": 0, "elapsed_s": 0.0, "ts": time.time()
             })
             # Not adding to failed_downloads.csv since there's no usable URL
+            continue
+
+        # skip if recording is too short (< 3 seconds)
+        duration_seconds = parse_length_to_seconds(length)
+        if duration_seconds < 3.0:
+            skipped_no_url += 1  # reuse counter for simplicity
+            logger.info(f"Row id={rec_id}: too short ({length} = {duration_seconds}s < 3s, skipping)")
+            append_log_row(DOWNLOAD_LOG, {
+                "id": rec_id, "en": en, "file_url": file_url, "q": q, "out_path": "",
+                "status": "skip", "error": "too_short", "bytes": 0, "elapsed_s": 0.0, "ts": time.time()
+            })
             continue
 
         # quality char (append)
@@ -289,8 +322,8 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
             })
             # Add to output CSV for existing files too
             append_output_csv_row(OUTPUT_CSV, {
-                "id": id_str, "en": en, "lat": lat, "lon": lon, "lic": lic,
-                "q": q_char, "length": length, "smp": smp, "file_path": out_path
+                "id": id_str, "en": en, "rec": rec, "cnt": cnt, "lat": lat, "lon": lon,
+                "lic": lic, "q": q_char, "length": length, "smp": smp
             })
             continue
 
@@ -314,8 +347,8 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
             })
             # Add to output CSV for successful downloads
             append_output_csv_row(OUTPUT_CSV, {
-                "id": id_str, "en": en, "lat": lat, "lon": lon, "lic": lic,
-                "q": q_char, "length": length, "smp": smp, "file_path": out_path
+                "id": id_str, "en": en, "rec": rec, "cnt": cnt, "lat": lat, "lon": lon,
+                "lic": lic, "q": q_char, "length": length, "smp": smp
             })
         else:
             failed += 1
@@ -337,11 +370,13 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
             except Exception:
                 pass
 
+    total_files = downloaded + skipped_exists
     logger.info("=== Summary ===")
     logger.info(f"Rows scanned: {count}")
-    logger.info(f"Downloaded: {downloaded}")
-    logger.info(f"Skipped (no URL): {skipped_no_url}")
-    logger.info(f"Skipped (already exists): {skipped_exists}")
+    logger.info(f"Downloaded (new): {downloaded}")
+    logger.info(f"Already existed: {skipped_exists}")
+    logger.info(f"TOTAL FILES: {total_files}")
+    logger.info(f"Skipped (no URL/too short): {skipped_no_url}")
     logger.info(f"Failed downloads: {failed}")
     logger.info(f"Download log at: {DOWNLOAD_LOG}")
     logger.info(f"Successful downloads CSV at: {OUTPUT_CSV}")
@@ -349,25 +384,51 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
 
 
 def parse_cmdline():
-    p = argparse.ArgumentParser(description="Download Xeno-Canto media files organized by species folder.")
-    p.add_argument("--csv", required=True, help="Path to input metadata CSV (must contain id,en,file,q columns)")
-    p.add_argument("--out", required=False, default=DEFAULT_OUT_ROOT, help=f"Output root folder (default: {DEFAULT_OUT_ROOT})")
-    p.add_argument("--dry-run", action="store_true", help="Don't download files; just show what would be done")
-    p.add_argument("--limit", type=int, default=None, help="Stop after this many rows (useful for testing/resume)")
+    p = argparse.ArgumentParser(
+        description="Stage 2: Download Xeno-Canto media files organized by species folder",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES:
+  # Download all files from Stage1 CSV
+  python Stage2_xc_download_bird_mp3s.py --input-csv Stage1_xc_sea_birds.csv \\
+    --outroot /Volumes/Evo/xc-asean-mp3s
+
+  # Dry run to test
+  python Stage2_xc_download_bird_mp3s.py --input-csv Stage1_xc_sea_birds.csv \\
+    --outroot /path/to/output --dry-run
+
+  # Download first 100 rows for testing
+  python Stage2_xc_download_bird_mp3s.py --input-csv Stage1_xc_sea_birds.csv \\
+    --outroot /path/to/output --limit 100
+        """
+    )
+
+    # Required arguments
+    p.add_argument("--input-csv", required=True, metavar="FILE",
+                   help="Path to input metadata CSV (must contain id,en,file,q columns)")
+    p.add_argument("--outroot", required=False, default=DEFAULT_OUT_ROOT, metavar="DIR",
+                   help=f"Output root folder (default: {DEFAULT_OUT_ROOT})")
+
+    # Processing options
+    p.add_argument("--dry-run", action="store_true",
+                   help="Simulate downloads without actually downloading files")
+    p.add_argument("--limit", type=int, default=None, metavar="N",
+                   help="Stop after this many rows (useful for testing/resume)")
     return p.parse_args()
 
 
 def main():
     args = parse_cmdline()
-    out_root = args.out
-    csv_path = args.csv
+    out_root = args.outroot
+    csv_path = args.input_csv
     dry_run = args.dry_run
     limit = args.limit
 
     global DOWNLOAD_LOG, OUTPUT_CSV, FAILED_CSV
-    DOWNLOAD_LOG = os.path.join(out_root, "download_log.csv")
-    OUTPUT_CSV = os.path.join(out_root, "Stage2_successful_downloads.csv")
-    FAILED_CSV = os.path.join(out_root, "Stage2_failed_downloads.csv")
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    DOWNLOAD_LOG = os.path.join(script_dir, "Stage2_download_log.csv")
+    OUTPUT_CSV = os.path.join(script_dir, "Stage2_xc_successful_downloads.csv")
+    FAILED_CSV = os.path.join(script_dir, "Stage2_xc_failed_downloads.csv")
 
     logger.info(f"Output root: {out_root}")
     ensure_dir(out_root)

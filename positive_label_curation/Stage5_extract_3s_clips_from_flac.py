@@ -72,6 +72,29 @@ logging.basicConfig(level=logging.WARNING, format="%(asctime)s - %(levelname)s -
 logger = logging.getLogger("extract_clips")
 
 # -------- helper utilities --------
+def load_metadata_lookup(csv_path: Path) -> dict:
+    """
+    Load Stage4_unique_flacs.csv and return a dict mapping xc_id -> metadata dict.
+    Keys in metadata dict match the CSV column names (id, en, rec, cnt, lat, lon, lic, q, length, smp).
+    """
+    if not csv_path or not csv_path.exists():
+        logger.warning(f"Metadata CSV not found: {csv_path}. Proceeding without metadata enrichment.")
+        return {}
+
+    try:
+        df = pd.read_csv(csv_path, dtype=str)  # Read all as strings to preserve formatting
+        lookup = {}
+        for _, row in df.iterrows():
+            xc_id = str(row.get('id', '')).strip()
+            if xc_id:
+                lookup[xc_id] = row.to_dict()
+        logger.info(f"Loaded metadata for {len(lookup)} recordings from {csv_path}")
+        return lookup
+    except Exception as e:
+        logger.error(f"Failed to load metadata CSV {csv_path}: {e}")
+        return {}
+
+
 def extract_xc_id_from_name(name: str) -> Optional[str]:
     """Try to extract integer Xeno-canto id from filename like 'xc123456' or 'xc123456_extra'."""
     import re
@@ -208,10 +231,11 @@ def choose_best_chunks_any(starts: np.ndarray, rms_vals: np.ndarray, num_chunks:
 
 # -------- main processing per file --------
 def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshold: float,
-                 csv_records: List[dict], dry_run: bool = False) -> Tuple[List[dict], int]:
+                 csv_records: List[dict], metadata_lookup: dict = None, dry_run: bool = False) -> Tuple[List[dict], int]:
     """
     Process a single FLAC file and return updated csv_records and number of clips saved.
     Always guarantees at least one clip per file (picks best if none exceed threshold).
+    metadata_lookup: dict mapping xc_id -> metadata dict from Stage4 CSV
     """
     saved_count = 0
     # read file (librosa load uses soundfile backend by default)
@@ -227,19 +251,45 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
     quality = extract_xc_quality(base_name)
     file_duration = duration  # Store for CSV
 
+    # Get metadata from lookup (if available)
+    metadata = {}
+    if metadata_lookup and xc_id != "unknown":
+        metadata = metadata_lookup.get(xc_id, {})
+
+    def make_record(start_ms, clip_dur, rms, clipped, fname, fpath):
+        """Helper to create CSV record with all fields including metadata."""
+        record = {
+            "xc_id": xc_id,
+            "species": species,
+            "quality": quality,
+            "recorder": metadata.get("rec", "") if metadata else "",
+            "country": metadata.get("cnt", "") if metadata else "",
+            "latitude": metadata.get("lat", "") if metadata else "",
+            "longitude": metadata.get("lon", "") if metadata else "",
+            "license": metadata.get("lic", "") if metadata else "",
+            "source_file": str(path),
+            "source_duration_sec": round(file_duration, 2),
+            "original_length": metadata.get("length", "") if metadata else "",
+            "sample_rate": metadata.get("smp", "") if metadata else "",
+            "clip_start_ms": start_ms,
+            "clip_duration_sec": clip_dur,
+            "rms_energy": float(rms),
+            "was_clipped": clipped,
+            "out_filename": fname,
+            "out_path": fpath
+        }
+        return record
+
     # Determine expected number of chunks and offset rule (3s windows)
     if duration < 3.0:
         chunks_expected = 0
         offset_sec = 0.0
-    elif duration <= 6.0:
-        chunks_expected = 1
-        offset_sec = 0.0
     elif duration <= 12.0:
-        chunks_expected = 2
+        chunks_expected = 1
         offset_sec = 0.0
     else:
         # Long files: skip first 3s to avoid possible voice annotation
-        chunks_expected = 2
+        chunks_expected = 1
         offset_sec = 3.0
 
     win_len_samples = int(round(WINDOW_SEC * sr))
@@ -263,20 +313,7 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
     # if still empty, skip this file (silently record in CSV only)
     if not candidates:
         # Record in CSV for tracking but don't print warning
-        csv_records.append({
-            "xc_id": xc_id,
-            "species": species,
-            "quality": quality,
-            "source_file": str(path),
-            "source_duration_sec": round(file_duration, 2),
-            "clip_start_ms": 0,
-            "clip_start_sec": 0.0,
-            "clip_duration_sec": 0.0,
-            "rms_energy": 0.0,
-            "was_clipped": False,
-            "out_filename": "SKIPPED_TOO_SHORT",
-            "out_path": "SKIPPED_TOO_SHORT"
-        })
+        csv_records.append(make_record(0, 0.0, 0.0, False, "SKIPPED_TOO_SHORT", "SKIPPED_TOO_SHORT"))
         return csv_records, saved_count
 
     # Save chosen chunks as FLAC with start_ms suffix
@@ -290,20 +327,7 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
 
         if dry_run:
             # For dry-run, keep the precomputed rms as best estimate
-            csv_records.append({
-                "xc_id": xc_id,
-                "species": species,
-                "quality": quality,
-                "source_file": str(path),
-                "source_duration_sec": round(file_duration, 2),
-                "clip_start_ms": start_ms,
-                "clip_start_sec": round(start_sec, 2),
-                "clip_duration_sec": WINDOW_SEC,
-                "rms_energy": float(rms_pre),
-                "was_clipped": False,
-                "out_filename": out_fname,
-                "out_path": str(out_path)
-            })
+            csv_records.append(make_record(start_ms, WINDOW_SEC, rms_pre, False, out_fname, str(out_path)))
             saved_count += 1
             continue
 
@@ -324,20 +348,7 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
         try:
             # write wav (soundfile infers format from extension too)
             sf.write(str(out_path), seg_to_write, sr, format='WAV', subtype='PCM_16')
-            csv_records.append({
-                "xc_id": xc_id,
-                "species": species,
-                "quality": quality,
-                "source_file": str(path),
-                "source_duration_sec": round(file_duration, 2),
-                "clip_start_ms": start_ms,
-                "clip_start_sec": round(start_sec, 2),
-                "clip_duration_sec": WINDOW_SEC,
-                "rms_energy": float(final_rms),
-                "was_clipped": clipped,
-                "out_filename": out_fname,
-                "out_path": str(out_path)
-            })
+            csv_records.append(make_record(start_ms, WINDOW_SEC, final_rms, clipped, out_fname, str(out_path)))
             saved_count += 1
         except Exception as e:
             logger.error(f"Failed to write {out_path}: {e}")
@@ -415,22 +426,56 @@ def select_top_clips_by_rms(csv_path: Path, output_root: Path, max_clips: int = 
 
 # -------- main loop over folders --------
 def main():
-    parser = argparse.ArgumentParser(description="Extract 3s WAV clips from converted FLAC files (16k) with smart selection.")
-    parser.add_argument("--inroot", required=True, help="Root folder containing species subfolders with FLAC files")
-    parser.add_argument("--outroot", required=True, help="Destination root for extracted WAV clips")
-    parser.add_argument("--threshold", type=float, default=0.001, help="RMS threshold to consider a 3s window non-silent (default 0.001, effectively captures all non-silent audio)")
-    parser.add_argument("--sr", type=int, default=DEFAULT_SR, help="Output sampling rate, default 16000")
-    parser.add_argument("--csv", default="clips_log.csv", help="CSV path to write clip metadata")
-    parser.add_argument("--dry-run", action="store_true", help="Do not write files; only simulate and write csv entries")
-    parser.add_argument("--max-clips", type=int, default=None, help="Maximum number of clips to keep (by RMS energy). If not specified, defaults to (total_clips // 1000) * 1000. Ignored if --no-quarantine is set.")
-    parser.add_argument("--no-quarantine", action="store_true", help="Skip quarantining. Keep all clips for Stage6 species balancing. Use this for balanced workflow.")
+    parser = argparse.ArgumentParser(
+        description="Stage 5: Extract 3s WAV clips from FLAC files with smart selection",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+WORKFLOWS:
+  RMS-only (quick):    Use --max-clips to cap dataset size immediately
+  Balanced (diverse):  Use --no-quarantine, then proceed to Stage6
+
+EXAMPLES:
+  # RMS-only workflow (final dataset ready after Stage5)
+  python Stage5_extract_3s_clips_from_flac.py --inroot flac/ --outroot clips/ \\
+    --output-csv clips_log.csv --max-clips 25000
+
+  # Balanced workflow (keep all clips for Stage6)
+  python Stage5_extract_3s_clips_from_flac.py --inroot flac/ --outroot clips/ \\
+    --output-csv clips_log.csv --no-quarantine
+        """
+    )
+
+    # Required arguments
+    parser.add_argument("--inroot", required=True, metavar="DIR",
+                        help="Input directory containing species subfolders with FLAC files")
+    parser.add_argument("--outroot", required=True, metavar="DIR",
+                        help="Output directory for extracted 3s WAV clips")
+
+    # Output options
+    parser.add_argument("--output-csv", default="clips_log.csv", metavar="FILE",
+                        help="Output CSV file with clip metadata (default: clips_log.csv)")
+    parser.add_argument("--metadata-csv", type=Path, metavar="FILE",
+                        help="Stage4_unique_flacs.csv for enriching output with recorder, country, etc.")
+
+    # Processing options
+    parser.add_argument("--threshold", type=float, default=0.001, metavar="FLOAT",
+                        help="RMS threshold for non-silent windows (default: 0.001)")
+    parser.add_argument("--sr", type=int, default=DEFAULT_SR, metavar="HZ",
+                        help="Output sampling rate in Hz (default: 16000)")
+    parser.add_argument("--max-clips", type=int, default=None, metavar="N",
+                        help="Max clips to keep by RMS. Auto: (total//1000)*1000. Ignored with --no-quarantine")
+    parser.add_argument("--no-quarantine", action="store_true",
+                        help="Keep all clips for Stage6 balancing (balanced workflow)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Simulate processing without writing audio files")
     args = parser.parse_args()
 
     input_root = Path(args.inroot)
     output_root = Path(args.outroot)
     sr_out = int(args.sr)
     threshold = float(args.threshold)
-    csv_path = Path(args.csv)
+    csv_path = Path(args.output_csv)
+    metadata_csv = args.metadata_csv
     dry_run = bool(args.dry_run)
     max_clips = int(args.max_clips) if args.max_clips is not None else None
     no_quarantine = bool(args.no_quarantine)
@@ -439,6 +484,9 @@ def main():
         print(f"ERROR: Input root does not exist: {input_root}")
         sys.exit(2)
     output_root.mkdir(parents=True, exist_ok=True)
+
+    # Load metadata lookup from Stage4 CSV if provided
+    metadata_lookup = load_metadata_lookup(metadata_csv) if metadata_csv else {}
 
     # Collect all species directories
     species_dirs = [p for p in sorted(input_root.iterdir()) if p.is_dir()]
@@ -482,7 +530,7 @@ def main():
             try:
                 csv_records, saved = process_file(
                     fpath, species_name, output_root, sr_out, threshold,
-                    csv_records, dry_run=dry_run
+                    csv_records, metadata_lookup=metadata_lookup, dry_run=dry_run
                 )
                 total_saved += saved
             except Exception as e:

@@ -42,16 +42,45 @@ import sys
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Move files excluded from balanced dataset to quarantine subdirectory"
+        description="Stage 7: Move excluded files to quarantine subdirectory",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+PREREQUISITE:
+  Stage6 must be run first to generate balanced_clips.csv
+
+PURPOSE:
+  Stage6 creates CSV listing clips to keep (metadata balancing only).
+  This script physically moves excluded files to quarantine/ subdirectory.
+
+EXAMPLES:
+  # Move excluded files to quarantine after Stage6
+  python Stage7_move_to_quarantine.py --input-csv balanced_clips.csv --outroot clips/
+
+  # Preview what would be moved (dry-run)
+  python Stage7_move_to_quarantine.py --input-csv balanced_clips.csv --outroot clips/ --dry-run
+
+NOTE:
+  This is safer than deleting - excluded clips are preserved in quarantine/
+  for potential future use.
+        """
     )
-    parser.add_argument("--csv", required=True, help="Balanced clips CSV from Stage6 (e.g., balanced_clips.csv)")
-    parser.add_argument("--outroot", required=True, help="Root directory containing audio clips")
+
+    # Required arguments
+    parser.add_argument("--input-csv", required=True, metavar="FILE",
+                        help="Balanced clips CSV from Stage6 (e.g., balanced_clips.csv)")
+    parser.add_argument("--outroot", required=True, metavar="DIR",
+                        help="Root directory containing audio clips")
+
+    # Processing options
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be moved without actually moving files")
     args = parser.parse_args()
 
     # Paths
-    balanced_csv = Path(args.csv)
+    balanced_csv = Path(args.input_csv)
     outroot = Path(args.outroot)
     quarantine_dir = outroot / "quarantine"
+    dry_run = args.dry_run
 
     if not balanced_csv.exists():
         print(f"ERROR: Balanced CSV not found: {balanced_csv}")
@@ -63,7 +92,8 @@ def main():
         sys.exit(1)
 
     # Create quarantine directory if it doesn't exist
-    quarantine_dir.mkdir(exist_ok=True)
+    if not dry_run:
+        quarantine_dir.mkdir(exist_ok=True)
 
     print(f"\n{'='*60}")
     print(f"Stage 7: Move Excluded Files to Quarantine")
@@ -71,6 +101,8 @@ def main():
     print(f"Balanced CSV: {balanced_csv}")
     print(f"Output directory: {outroot}")
     print(f"Quarantine directory: {quarantine_dir}")
+    if dry_run:
+        print(f"Mode: DRY RUN (no files will be moved)")
     print(f"{'='*60}\n")
 
     print("Loading balanced clips list...")
@@ -101,28 +133,40 @@ def main():
 
     # Move files to quarantine
     if files_to_move:
-        print("\nMoving files to quarantine...")
-        for file_path in tqdm(files_to_move, desc="Moving files", unit="file"):
-            dest_path = quarantine_dir / file_path.name
-            shutil.move(str(file_path), str(dest_path))
-        print(f"\nSuccessfully moved {len(files_to_move):,} files to quarantine")
+        if dry_run:
+            print(f"\n[DRY RUN] Would move {len(files_to_move):,} files to quarantine")
+            print("\nSample files that would be moved (first 5):")
+            for file_path in files_to_move[:5]:
+                print(f"  {file_path.name}")
+            if len(files_to_move) > 5:
+                print(f"  ... and {len(files_to_move) - 5:,} more")
+        else:
+            print("\nMoving files to quarantine...")
+            for file_path in tqdm(files_to_move, desc="Moving files", unit="file"):
+                dest_path = quarantine_dir / file_path.name
+                shutil.move(str(file_path), str(dest_path))
+            print(f"\nSuccessfully moved {len(files_to_move):,} files to quarantine")
     else:
         print("\nNo files to move!")
 
     # Verify
-    print("\nVerifying...")
-    remaining_files = list(outroot.glob('*.flac')) + list(outroot.glob('*.wav'))
-    remaining_files = [f for f in remaining_files if f.parent == outroot]
-    quarantined_files = list(quarantine_dir.glob('*.flac')) + list(quarantine_dir.glob('*.wav'))
+    if not dry_run:
+        print("\nVerifying...")
+        remaining_files = list(outroot.glob('*.flac')) + list(outroot.glob('*.wav'))
+        remaining_files = [f for f in remaining_files if f.parent == outroot]
+        quarantined_files = list(quarantine_dir.glob('*.flac')) + list(quarantine_dir.glob('*.wav'))
 
-    print(f"Files remaining in destination: {len(remaining_files):,}")
-    print(f"Files in quarantine: {len(quarantined_files):,}")
-    print(f"Expected in destination: {len(keep_files):,}")
+        print(f"Files remaining in destination: {len(remaining_files):,}")
+        print(f"Files in quarantine: {len(quarantined_files):,}")
+        print(f"Expected in destination: {len(keep_files):,}")
 
-    if len(remaining_files) == len(keep_files):
-        print("\n✓ Success! File counts match.")
+        if len(remaining_files) == len(keep_files):
+            print("\n✓ Success! File counts match.")
+        else:
+            print(f"\n⚠ Warning: File count mismatch! Expected {len(keep_files):,}, got {len(remaining_files):,}")
     else:
-        print(f"\n⚠ Warning: File count mismatch! Expected {len(keep_files):,}, got {len(remaining_files):,}")
+        print(f"\n[DRY RUN] Verification skipped")
+        print(f"[DRY RUN] After moving, {len(keep_files):,} files would remain in destination")
 
 if __name__ == "__main__":
     main()

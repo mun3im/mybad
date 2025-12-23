@@ -454,27 +454,50 @@ def parse_sample_rate(value: str) -> int:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Convert audio files to mono 16kHz FLAC with clipping detection"
+        description="Stage 3: Convert audio files to mono 16kHz FLAC with clipping detection",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+EXAMPLES:
+  # Basic conversion (MP3 to 16kHz FLAC)
+  python Stage3_convert_mp3_to_16k_flac.py --inroot /path/to/mp3s \\
+    --outroot /path/to/flacs
+
+  # With parallel workers
+  python Stage3_convert_mp3_to_16k_flac.py --inroot /path/to/mp3s \\
+    --outroot /path/to/flacs --workers 8
+
+  # With normalization
+  python Stage3_convert_mp3_to_16k_flac.py --inroot /path/to/mp3s \\
+    --outroot /path/to/flacs --normalize-db -1.0 --allow-boost
+        """
     )
+
+    # Required arguments
     parser.add_argument(
         "--inroot",
         required=True,
-        help="Input root directory"
+        metavar="DIR",
+        help="Input root directory containing audio files"
     )
     parser.add_argument(
         "--outroot",
         required=True,
-        help="Output root directory"
+        metavar="DIR",
+        help="Output root directory for converted FLAC files"
     )
+
+    # Processing options
     parser.add_argument(
         "--workers",
         type=int,
         default=4,
+        metavar="N",
         help="Number of parallel workers (default: 4)"
     )
     parser.add_argument(
         "--normalize-db",
         type=float,
+        metavar="DBFS",
         help="Peak normalize to this dBFS (e.g., -1.0)"
     )
     parser.add_argument(
@@ -486,11 +509,15 @@ def main():
         "--min-sr",
         type=parse_sample_rate,
         default=DEFAULT_MIN_SR,
+        metavar="HZ",
         help="Minimum native sample rate (e.g., '24k', '16000')"
     )
+
+    # Output options
     parser.add_argument(
         "--log-csv",
         default=LOG_CSV,
+        metavar="FILE",
         help=f"Output CSV log path (default: {LOG_CSV})"
     )
 
