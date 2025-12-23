@@ -302,44 +302,85 @@ python Stage6_balance_species.py \
 **Expected Output**:
 
 ```
+============================================================
+Stage 6: Species-Level Undersampling for Ecological Diversity
+============================================================
+Input CSV: Stage5_results.csv
+Output CSV: balanced_clips.csv
+Target dataset size: 20,000
+============================================================
+Loaded 38,553 valid clips from CSV
+Note: Ensure Stage5 was run with --no-quarantine flag for balanced workflow
+============================================================
 PRE-UNDERSAMPLING STATISTICS
-====================================
-Total species: 559
-Total samples: 38,426
-Average samples per species: 68.8
-Gini coefficient: 0.531
+============================================================
+Total species: 1676
+Total samples: 38,553
+Average samples per species: 23.0
+Gini coefficient: 0.606
 Min samples (species): 1
-Max samples (species): 420
-
+Max samples (species): 786
+Top 5 species by sample count:
+  Identity_unknown: 786 samples
+  Greater_Racket-tailed_Drongo: 332 samples
+  Olive-backed_Sunbird: 261 samples
+  Blue-eared_Barbet: 220 samples
+  Mountain_Tailorbird: 214 samples
 Quality grade distribution (all clips):
-  A: 12,500 (32.5%)
-  B: 15,800 (41.1%)
-  C: 8,200 (21.3%)
-  D: 1,800 (4.7%)
-  U (unknown): 126 (0.3%)
-
+  A: 11,213 (29.1%)
+  B: 18,428 (47.8%)
+  C: 7,094 (18.4%)
+  D: 1,274 (3.3%)
+  U (unknown): 544 (1.4%)
+Quality distribution per species (summary):
+  Species with grade A clips: 1262/1676
+  Species with grade B clips: 1496/1676
+  Species with grade C clips: 1231/1676
+  Species with grade D clips: 538/1676
+  Species with grade U clips: 267/1676
+============================================================
+Applying species-level undersampling...
+Applying diversity-aware undersampling (base cap: 11 samples/species)...
+Processing species: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1676/1676 [00:01<00:00, 1312.42species/s]
+Initial balance yielded 13,065 samples. Need 6,935 more to reach target.
+Building backfill pool: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████| 1676/1676 [00:01<00:00, 1549.26species/s]
+Backfilling with 6,935 samples (prioritizing new XC IDs)...
+Backfilling: 100%|██████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 6935/6935 [00:06<00:00, 1067.35sample/s]
+Added 6,935 more samples to reach closer to target
+============================================================
 POST-UNDERSAMPLING STATISTICS
-====================================
-Total species: 559
-Total samples: 25,000
-Average samples per species: 44.7
-Gini coefficient: 0.449
+============================================================
+Total species: 1676
+Total samples: 20,000
+Average samples per species: 11.9
+Gini coefficient: 0.475
 Min samples (species): 1
-Max samples (species): 160
-
+Max samples (species): 250
+Top 5 species by sample count:
+  Identity_unknown: 250 samples
+  Greater_Racket-tailed_Drongo: 118 samples
+  White-chested_Babbler: 107 samples
+  Rufous-tailed_Tailorbird: 103 samples
+  Pygmy_Cupwing: 90 samples
 DIVERSITY METRICS:
-Unique XC recordings: 12,345
-Samples per recording (avg): 2.02
-
+Unique XC recordings: 20,000
+Samples per recording (avg): 1.00
 Quality distribution:
-  A: 8,450 (33.8%)
-  B: 10,120 (40.5%)
-  C: 5,230 (20.9%)
-  D: 1,100 (4.4%)
-  U (unknown): 100 (0.4%)
+  A: 11,213 (56.1%)
+  B: 7,326 (36.6%)
+  C: 1,171 (5.9%)
+  D: 202 (1.0%)
+  U (unknown): 88 (0.4%)
+============================================================
+Gini coefficient improvement: 21.6%
+Samples removed: 18,553
+Balanced dataset saved to: balanced_clips.csv
+Generating distribution histograms...
+Long-tail distribution plot saved to: species_balance.png
+============================================================
+Species balancing complete!
+============================================================
 
-Gini coefficient improvement: 15.4%
-Samples removed: 13,426
 ```
 
 **Visualization**: Side-by-side long-tail plots showing pre/post distribution
