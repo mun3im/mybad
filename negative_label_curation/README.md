@@ -6,7 +6,8 @@ Automated pipeline for extracting 25,000 high-quality negative (non-bird) audio 
 
 This pipeline curates negative samples from multiple acoustic datasets to train robust bird detection models for field deployment. All samples are 3-second mono clips at 16kHz with consistent quality filtering across stages.
 
-**Target:** 25,000 negative samples
+**Target:** 20,000 negative samples
+
 **Output:** Acoustically diverse non-bird sounds relevant to real-world deployment
 
 ## Why These Datasets?
