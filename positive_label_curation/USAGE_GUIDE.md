@@ -380,7 +380,6 @@ Long-tail distribution plot saved to: species_balance.png
 ============================================================
 Species balancing complete!
 ============================================================
-
 ```
 
 **Visualization**: Side-by-side long-tail plots showing pre/post distribution
@@ -427,27 +426,27 @@ python Stage7_move_to_quarantine.py \
 Stage 7: Move Excluded Files to Quarantine
 ============================================================
 Balanced CSV: balanced_clips.csv
-Output directory: /Volumes/Evo/xc-asean-clips
-Quarantine directory: /Volumes/Evo/xc-asean-clips/quarantine
+Output directory: /Volumes/Evo/xc-asean-3s-wav
+Quarantine directory: /Volumes/Evo/xc-asean-3s-wav/quarantine
 ============================================================
 
 Loading balanced clips list...
-Files to keep: 25,000
+Files to keep: 20,000
 
 Scanning destination directory...
-Total files in destination: 38,426
-Files to move to quarantine: 13,426
-Files to keep in destination: 25,000
+Total files in destination: 38,553
+Files to move to quarantine: 18,553
+Files to keep in destination: 20,000
 
 Moving files to quarantine...
-Moving files: 100%|██████████| 13426/13426 [00:02<00:00, 5832.19file/s]
+Moving files: 100%|█████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 18553/18553 [00:02<00:00, 6651.66file/s]
 
-Successfully moved 13,426 files to quarantine
+Successfully moved 18,553 files to quarantine
 
 Verifying...
-Files remaining in destination: 25,000
-Files in quarantine: 13,426
-Expected in destination: 25,000
+Files remaining in destination: 20,000
+Files in quarantine: 18,553
+Expected in destination: 20,000
 
 ✓ Success! File counts match.
 ```
