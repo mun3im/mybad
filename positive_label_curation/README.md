@@ -1,360 +1,657 @@
-# Positive Label Curation Pipeline
+# Xeno-Canto Bird Audio Dataset Curation Pipeline
 
-Audio data curation pipeline for the MyBAD (Malaysian Bird Audio Dataset) project. This pipeline fetches, downloads, processes, and curates bird audio recordings from Xeno-Canto for Southeast Asian countries.
+A complete 7-stage pipeline for fetching, processing, and curating balanced bird audio datasets from Xeno-Canto (xeno-canto.org). Part of the Malaysian Bird Audio Dataset (MyBAD) project.
 
 ## Pipeline Overview
 
 ```
 Stage 1: Fetch Metadata → Stage 2: Download MP3s → Stage 3: Convert to FLAC →
-Stage 4: Detect Duplicates → Stage 5: Extract Clips → Stage 6: Balance Species →
-Stage 7: Move to Quarantine
+Stage 4: Deduplicate → Stage 5: Extract Clips → Stage 6: Balance Species →
+Stage 7: Create Dataset
 ```
+
+## Quick Start
+
+### One-Command Pipeline
+
+```bash
+chmod +x run_pipeline.sh
+./run_pipeline.sh
+```
+
+The shell script runs all 7 stages automatically with optimized settings:
+- Fetches Southeast Asian bird metadata
+- Downloads ~40,000 MP3 files
+- Converts to 16kHz mono FLAC
+- Deduplicates recordings
+- Extracts 3-second clips
+- Balances to 20,000 clips
+- Creates final dataset directory
+
+### Manual Stage-by-Stage
+
+```bash
+# Stage 1: Fetch metadata
+python Stage1_xc_fetch_bird_metadata.py --country all
+
+# Stage 2: Download MP3s
+python Stage2_xc_download_bird_mp3s.py --outroot /Volumes/Evo/xc-asean-mp3s
+
+# Stage 3: Convert to FLAC
+python Stage3_convert_mp3_to_16k_flac.py \
+  --inroot /Volumes/Evo/xc-asean-mp3s \
+  --outroot /Volumes/Evo/xc-asean-flac \
+  --workers 8
+
+# Stage 4: Deduplicate
+python Stage4_find_flac_duplicates.py /Volumes/Evo/xc-asean-flac
+
+# Stage 5: Extract clips
+python Stage5_extract_3s_clips_from_flac.py \
+  --inroot /Volumes/Evo/xc-asean-flac \
+  --outroot /Volumes/Evo/xc-asean-clips \
+  --no-quarantine
+
+# Stage 6: Balance species
+python Stage6_balance_species.py --outroot /Volumes/Evo/xc-asean-clips
+
+# Stage 7: Create final dataset
+python Stage7_move_to_quarantine.py \
+  --outroot /Volumes/Evo/xc-asean-clips \
+  --dataset-dir /Volumes/Evo/newdataset
+```
+
+## Features
+
+- **Automated workflow**: Run all 7 stages with a single shell script
+- **Resume-safe**: Skips existing files and CSVs, safe to re-run
+- **Quality filtering**: Removes duplicates, low-quality recordings, and non-sound files
+- **Species balancing**: Creates ecologically diverse datasets with configurable target size
+- **Rich metadata**: Preserves all Xeno-Canto metadata (species, location, recorder, quality, etc.)
+- **Parallel processing**: Multi-threaded conversion and processing
+- **Audio deduplication**: Detects both perfect and near-duplicates using mel-spectrogram embeddings
+
+## Requirements
+
+### Python Dependencies
+
+```bash
+pip install pandas requests librosa soundfile pydub tqdm scikit-learn matplotlib
+```
+
+### System Dependencies
+
+- **ffmpeg**: Required for audio conversion
+  ```bash
+  # macOS
+  brew install ffmpeg
+
+  # Ubuntu/Debian
+  sudo apt-get install ffmpeg
+  ```
+
+### Python Version
+
+- Python 3.8 or higher
 
 ## Pipeline Stages
 
 ### Stage 1: Fetch Metadata
-**Script:** `Stage1_xc_fetch_bird_metadata.py`
 
-Fetches bird species metadata from Xeno-Canto API for Southeast Asian countries (Malaysia, Singapore, Indonesia, Brunei, Thailand).
+**Script**: `Stage1_xc_fetch_bird_metadata.py`
 
-**Prerequisites:**
+Fetches bird recording metadata from Xeno-Canto API for Southeast Asian countries.
+
+**Usage**:
 ```bash
-export XENO_API_KEY="your_xeno_canto_api_key"
-```
-
-**Usage:**
-```bash
-# Fetch all Southeast Asian countries (RECOMMENDED)
-python Stage1_xc_fetch_bird_metadata.py --country all --output-csv xc_sea_birds.csv
+# Fetch all Southeast Asian countries (default)
+python Stage1_xc_fetch_bird_metadata.py --country all
 
 # Fetch single country
-python Stage1_xc_fetch_bird_metadata.py --country Malaysia --output-csv xc_my_birds.csv
-
-# Fetch specific countries
-python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Indonesia Thailand --output-csv xc_multi.csv
+python Stage1_xc_fetch_bird_metadata.py --country Malaysia
 ```
 
-**Output:**
-- `Stage1_xc_sea_birds.csv` - Metadata for all bird recordings
-- Automatic deduplication by XC ID
-- Country breakdown statistics
+**Output**: `Stage1_xc_sea_birds.csv`
+
+**Countries**: Brunei, Cambodia, Indonesia, Laos, Malaysia, Myanmar, Philippines, Singapore, Thailand, Timor-Leste, Vietnam
+
+**CSV Schema**:
+- `id` - Xeno-Canto recording ID
+- `en` - English species name
+- `rec` - Recordist name
+- `cnt` - Country
+- `lat`, `lon` - GPS coordinates
+- `file` - Download URL
+- `lic` - License URL
+- `q` - Quality rating (A/B/C/D/E/n)
+- `length` - Recording duration (MM:SS)
+- `smp` - Sample rate
 
 ---
 
-### Stage 2: Download Audio
-**Script:** `Stage2_xc_download_bird_mp3s.py`
+### Stage 2: Download MP3s
 
-Downloads MP3 audio files from Xeno-Canto based on metadata CSV.
+**Script**: `Stage2_xc_download_bird_mp3s.py`
 
-**Features:**
-- Automatic retry with exponential backoff
-- Skips files < 3 seconds
-- Skips 4xx/5xx HTTP errors immediately (no retries)
-- Creates metadata CSV with recorder, country, coordinates, license
+Downloads audio files from Xeno-Canto, organized by species.
 
-**Usage:**
+**Usage**:
 ```bash
-# Download all files from Stage1 CSV
-python Stage2_xc_download_bird_mp3s.py \
-  --input-csv Stage1_xc_sea_birds.csv \
-  --outroot /Volumes/Evo/xc-asean-mp3s
+python Stage2_xc_download_bird_mp3s.py --outroot /path/to/mp3s
 
-# Test with first 100 rows
-python Stage2_xc_download_bird_mp3s.py \
-  --input-csv Stage1_xc_sea_birds.csv \
-  --outroot /path/to/output \
-  --limit 100
+# Test with first 100 files
+python Stage2_xc_download_bird_mp3s.py --outroot /path/to/mp3s --limit 100
 ```
 
-**Output:**
-- MP3 files organized by species: `{species_name}/xc{id}_{quality}.mp3`
-- `Stage2_xc_successful_downloads.csv` - Successful downloads with metadata:
-  - `id, en, rec, cnt, lat, lon, lic, q, length, smp`
-- `Stage2_download_log.csv` - Complete download log with status/errors
+**Features**:
+- Skips recordings < 3 seconds
+- Validates file sizes (minimum 1 KB)
+- Handles rate limiting (0.1s delay between requests)
+- Resume-safe (skips existing files)
+- Organized by species folders
+- Automatic retry with exponential backoff
+
+**Outputs**:
+- `Stage2_xc_successful_downloads.csv` - Successfully downloaded files
 - `Stage2_xc_failed_downloads.csv` - Failed downloads for retry
+- `Stage2_download_log.csv` - Detailed download log
+
+**Filename format**: `xc{id}_{quality}.mp3` (e.g., `xc422286_A.mp3`)
+
+**Important**: This script was recently fixed to prevent duplicate CSV entries on reruns.
 
 ---
 
 ### Stage 3: Convert to FLAC
-**Script:** `Stage3_convert_mp3_to_16k_flac.py`
 
-Converts MP3 files to 16kHz mono FLAC format for consistent processing.
+**Script**: `Stage3_convert_mp3_to_16k_flac.py`
 
-**Usage:**
+Converts MP3s to 16kHz mono FLAC format for consistency.
+
+**Usage**:
 ```bash
-# Basic conversion
-python Stage3_convert_mp3_to_16k_flac.py \
-  --inroot /path/to/mp3s \
-  --outroot /path/to/flacs
-
-# With parallel workers and normalization
 python Stage3_convert_mp3_to_16k_flac.py \
   --inroot /path/to/mp3s \
   --outroot /path/to/flacs \
-  --workers 8 \
-  --normalize-db -1.0 \
-  --allow-boost
+  --workers 8
 ```
 
-**Output:**
-- FLAC files (16kHz, mono): `{species_name}/xc{id}_{quality}.flac`
-- Conversion log CSV
+**Features**:
+- Parallel processing (default: 8 workers)
+- Preserves directory structure
+- Matches files to CSV records by XC ID
+- Skips non-sound files
+- Optional normalization (`--normalize-db`, `--allow-boost`)
+- Resume-safe (skips existing FLAC files)
+
+**Outputs**:
+- `Stage3_xc_successful_conversion.csv` - Successful conversions with metadata
+- `Stage3_failed_conversion.csv` - Failed conversions
+
+**Filename format**: `xc{id}_{quality}.flac`
 
 ---
 
-### Stage 4: Detect Duplicates
-**Script:** `Stage4_faiss_deduplicate.py`
+### Stage 4: Deduplicate Files
 
-Detects and quarantines duplicate audio clips using acoustic similarity. **Quarantines newer duplicates** (higher XC numbers) to keep older recordings.
+**Script**: `Stage4_find_flac_duplicates.py`
 
-**Features:**
-- Computes mel-spectrogram embeddings for each audio file
-- Performs all-pairs similarity comparison using cosine similarity
-- Automatically quarantines perfect duplicates (similarity ≥ 0.999)
-- **Creates Stage4_unique_flacs.csv** - CSV of non-quarantined files with metadata
+Detects and quarantines duplicate recordings using audio similarity.
 
-**Usage:**
+**Usage**:
 ```bash
-# Find duplicates and create unique files CSV
-python Stage4_faiss_deduplicate.py /path/to/flacs \
-  --stage2-csv Stage2_xc_successful_downloads.csv \
-  --stage4-csv Stage4_unique_flacs.csv
+# With default settings (quarantines both perfect and near-duplicates)
+python Stage4_find_flac_duplicates.py /path/to/flacs
+
+# Quarantine only perfect duplicates
+python Stage4_find_flac_duplicates.py /path/to/flacs --no-quarantine-near-duplicates
 
 # Dry run to preview
-python Stage4_faiss_deduplicate.py /path/to/flacs \
-  --stage2-csv Stage2_xc_successful_downloads.csv \
-  --dry-run
+python Stage4_find_flac_duplicates.py /path/to/flacs --dry-run
 ```
 
-**Output:**
-- `duplicate_pairs.txt` - Near-duplicates for manual review
-- `quarantine/` - Newer duplicate files moved here
-- `Stage4_unique_flacs.csv` - **Metadata for kept files** (same columns as Stage2)
+**Deduplication Algorithm**:
 
-**See:** [Stage4_duplicate_detection_algorithm_documentation.md](./Stage4_duplicate_detection_algorithm_documentation.md) for detailed algorithm documentation.
+1. **MD5 Hash**: Perfect duplicate detection
+2. **Mel-spectrogram Embeddings**: Acoustic similarity (128 mel bins, 8kHz max freq)
+3. **Cosine Similarity**: Threshold = 0.95 for near-duplicates
+4. **Quarantine Strategy**:
+   - Perfect duplicates (≥ 0.999): Quarantine newer recording (higher XC ID)
+   - Near-duplicates (≥ 0.95): Optional quarantine (e.g., different bitrates)
+
+**Outputs**:
+- `Stage4_unique_flacs.csv` - Metadata for non-quarantined files
+- `quarantine/` - Directory containing duplicate files
+- `duplicate_pairs.txt` - Near-duplicates for manual review
+
+**Important**: Use `--no-quarantine-near-duplicates` if you want to keep files at different bitrates.
 
 ---
 
-### Stage 5: Extract Clips
-**Script:** `Stage5_extract_3s_clips_from_flac.py`
+### Stage 5: Extract 3-Second Clips
 
-Extracts 3-second non-overlapping clips from full-length FLAC recordings with **metadata enrichment**.
+**Script**: `Stage5_extract_3s_clips_from_flac.py`
 
-**Features:**
-- RMS-based clip selection (threshold: 0.001)
-- Clipping detection and soft limiting
-- **Metadata enrichment** from Stage4 CSV (recorder, country, coordinates, license)
-- Dual workflow: RMS-only OR balanced (for Stage6)
+Extracts multiple 3-second clips from each recording.
 
-**Usage:**
+**Usage**:
 ```bash
-# Balanced workflow (RECOMMENDED - keeps all clips for Stage6)
+# Balanced workflow (for Stage 6)
 python Stage5_extract_3s_clips_from_flac.py \
   --inroot /path/to/flacs \
   --outroot /path/to/clips \
-  --output-csv clips_log.csv \
-  --metadata-csv Stage4_unique_flacs.csv \
-  --threshold 0.001 \
   --no-quarantine
-
-# RMS-only workflow (immediate dataset, no Stage6)
-python Stage5_extract_3s_clips_from_flac.py \
-  --inroot /path/to/flacs \
-  --outroot /path/to/clips \
-  --output-csv clips_log.csv \
-  --metadata-csv Stage4_unique_flacs.csv \
-  --max-clips 25000
 ```
 
-**Output:**
-- WAV clips (16kHz, PCM_16, 3 seconds): `xc{id}_{quality}_{start_ms}.wav`
-- `clips_log.csv` with metadata:
-  - Core: `xc_id, species, quality`
-  - **Metadata** (from Stage4): `recorder, country, latitude, longitude, license`
-  - Source: `source_file, source_duration_sec, original_length, sample_rate`
-  - Clip: `clip_start_ms, clip_duration_sec, rms_energy, was_clipped`
-  - Output: `out_filename, out_path`
+**Features**:
+- Extracts multiple non-overlapping clips per file
+- RMS threshold: 0.001 (avoids silence)
+- Clipping detection and soft limiting
+- Preserves all Stage 4 metadata
+- Adds `start_ms` and `clip_filename` fields
 
-**Important:** Use `--no-quarantine` flag when running before Stage 6 to keep all clips for balancing.
+**Output**: `Stage5_unique_3sclips.csv`
+
+**CSV includes**:
+- All metadata from Stage 4 (species, recorder, country, coordinates, license, quality)
+- `start_ms` - Clip start time in milliseconds
+- `clip_filename` - Output filename
+
+**Filename format**: `xc{id}_{quality}_{start_ms}.wav` (e.g., `xc422286_A_0.wav`, `xc422286_A_3000.wav`)
+
+**Important**: Use `--no-quarantine` flag when running before Stage 6 to keep all clips for balancing.
 
 ---
 
 ### Stage 6: Balance Species
-**Script:** `Stage6_balance_species.py`
 
-Applies species-level undersampling to achieve ecological diversity while maximizing recording variety and quality.
+**Script**: `Stage6_balance_species.py`
 
-**Usage:**
+Balances species representation to create ecologically diverse dataset.
+
+**Usage**:
 ```bash
-python Stage6_balance_species.py \
-  --input-csv clips_log.csv \
-  --outroot /path/to/clips \
-  --output-csv balanced_clips.csv \
-  --target-size 25000 \
-  --plots species_balance.png
+# Use default target size (20,000)
+python Stage6_balance_species.py --outroot /path/to/clips
+
+# Custom target size
+python Stage6_balance_species.py --outroot /path/to/clips --target-size 50000
 ```
 
-**Key Features:**
-- Diversity-aware sampling (prioritizes unique XC recordings)
-- Quality-weighted selection (A > B > C > D ratings)
+**Balancing Strategy**:
+- Equal representation across species
+- Random sampling within species
+- Prioritizes diversity and quality
 - Gini coefficient tracking for distribution equality
-- Generates before/after distribution plots
 
-**Output:**
-- `balanced_clips.csv` - Metadata listing which clips to keep
-- `species_balance.png` - Before/after distribution visualization
+**Target Size**: Default 20,000 clips (configurable via `--target-size` or `TARGET_DATASET_SIZE` constant in script)
+
+**Output**: `Stage6_balanced_clips.csv` - Metadata listing which clips to keep
+
+**Important**: This is a metadata-only operation. Files are not moved until Stage 7.
 
 ---
 
-### Stage 7: Move to Quarantine
-**Script:** `Stage7_move_to_quarantine.py`
+### Stage 7: Create Final Dataset
 
-Moves files excluded from the balanced dataset to a quarantine subdirectory.
+**Script**: `Stage7_move_to_quarantine.py`
 
-**Usage:**
+Creates final dataset directory with balanced clips from Stage 6.
+
+**Usage**:
 ```bash
-python Stage7_move_to_quarantine.py \
-  --input-csv balanced_clips.csv \
-  --outroot /path/to/clips
+# Auto-generated directory name
+python Stage7_move_to_quarantine.py --outroot /path/to/clips
 
-# Preview what would be moved
+# Custom dataset directory
 python Stage7_move_to_quarantine.py \
-  --input-csv balanced_clips.csv \
   --outroot /path/to/clips \
-  --dry-run
+  --dataset-dir /path/to/my-dataset
+
+# Dry run to preview
+python Stage7_move_to_quarantine.py --outroot /path/to/clips --dry-run
 ```
 
-**Purpose:** Stage 6 only creates a metadata file. Stage 7 physically reorganizes files by moving excluded clips to `quarantine/` subdirectory, leaving only the balanced dataset in the main directory.
+**Features**:
+- Auto-increments directory names: `dataset_20000_001`, `dataset_20000_002`, etc.
+- Copies selected files to dataset directory
+- Creates dataset manifest CSV
+- Preserves original clips in source directory
+- Verifies final count matches expected
+
+**Outputs**:
+- `dataset_{size}_{counter}/` - Final dataset directory
+- `dataset_manifest.csv` - Metadata for all files in dataset
+
+**Directory naming**: Format is `dataset_{target_size}_{counter:03d}` where counter auto-increments if directory exists.
 
 ---
-
-## Key Parameters
-
-| Parameter | Value | Purpose |
-|-----------|-------|---------|
-| Sample Rate | 16 kHz | Consistent audio processing |
-| Clip Duration | 3.0 sec | Fixed-length segments for modeling |
-| Audio Format | FLAC (Stage 3-4), WAV (Stage 5+) | Lossless compression |
-| Channels | Mono | Single-channel audio |
-| Min Separation | 1.5 sec | Between clips from same file |
 
 ## CSV Data Flow
 
 ```
-Stage1 → id, en, rec, cnt, lat, lon, lic, q, length, smp, ...
+Stage1_xc_sea_birds.csv
+  ├─> id, en, rec, cnt, lat, lon, file, lic, q, length, smp
   ↓
-Stage2 → id, en, rec, cnt, lat, lon, lic, q, length, smp
+Stage2_xc_successful_downloads.csv
+  ├─> id, en, rec, cnt, lat, lon, lic, q, length, smp
   ↓
-Stage4 → id, en, rec, cnt, lat, lon, lic, q, length, smp (filtered: no duplicates)
+Stage3_xc_successful_conversion.csv (adds conversion metadata)
+  ├─> Same as Stage2 + conversion fields
   ↓
-Stage5 → xc_id, species, quality, recorder, country, latitude, longitude, license,
-         source_file, source_duration_sec, original_length, sample_rate,
-         clip_start_ms, clip_duration_sec, rms_energy, was_clipped, ...
+Stage4_unique_flacs.csv (filtered: no duplicates)
+  ├─> Same as Stage3 (deduplicated)
   ↓
-Stage6 → Same columns as Stage5 (balanced subset)
+Stage5_unique_3sclips.csv
+  ├─> All Stage4 fields + start_ms, clip_filename
+  ↓
+Stage6_balanced_clips.csv
+  ├─> Same as Stage5 (balanced subset)
+  ↓
+Stage7: dataset_manifest.csv (final dataset)
+  └─> Same as Stage6 (physically copied to dataset dir)
 ```
 
-## Duplicate Detection Algorithm
+## Output Directory Structure
 
-Stage 4 uses acoustic similarity to detect duplicates:
-
-1. **Embedding**: Computes normalized mel-spectrogram (128 mel bins, 8kHz max freq)
-2. **Similarity**: Frame-wise cosine similarity with three metrics:
-   - Mean similarity ≥ 0.997
-   - Min similarity ≥ 0.985
-   - 5th percentile ≥ 0.992
-3. **Quarantine**: Perfect duplicates (≥ 0.999) - **newer recording** (higher XC ID) moved to `quarantine/`
-4. **Output**: Near-duplicates saved to `duplicate_pairs.txt` for review
-
-### Quarantine Structure
 ```
-flacs/
-├── quarantine/          # Newer duplicate files moved here
-│   ├── Species_A/
-│   └── Species_B/
-├── Species_A/           # Older/unique files remain
-└── Species_B/
+project/
+├── Stage1_xc_sea_birds.csv
+├── Stage2_xc_successful_downloads.csv
+├── Stage2_download_log.csv
+├── Stage2_xc_failed_downloads.csv
+├── Stage3_xc_successful_conversion.csv
+├── Stage3_failed_conversion.csv
+├── Stage4_unique_flacs.csv
+├── Stage5_unique_3sclips.csv
+├── Stage6_balanced_clips.csv
+├── run_pipeline.sh
+├── Stage1_xc_fetch_bird_metadata.py
+├── Stage2_xc_download_bird_mp3s.py
+├── Stage3_convert_mp3_to_16k_flac.py
+├── Stage4_find_flac_duplicates.py
+├── Stage5_extract_3s_clips_from_flac.py
+├── Stage6_balance_species.py
+├── Stage7_move_to_quarantine.py
+│
+├── /Volumes/Evo/xc-asean-mp3s/          # Stage 2 output
+│   ├── Species_Name_1/
+│   │   ├── xc123456_A.mp3
+│   │   └── xc123457_B.mp3
+│   └── Species_Name_2/
+│       └── xc123458_A.mp3
+│
+├── /Volumes/Evo/xc-asean-flac/          # Stage 3 output
+│   ├── Species_Name_1/
+│   │   ├── xc123456_A.flac
+│   │   └── xc123457_B.flac
+│   └── quarantine/                      # Stage 4 duplicates
+│       └── xc123459_A.flac
+│
+├── /Volumes/Evo/xc-asean-clips/         # Stage 5 output
+│   ├── xc123456_A_0.wav
+│   ├── xc123456_A_3000.wav
+│   ├── xc123456_A_6000.wav
+│   └── xc123457_B_0.wav
+│
+└── /Volumes/Evo/newdataset/             # Stage 7 output
+    └── dataset_20000_001/
+        ├── dataset_manifest.csv
+        ├── xc123456_A_0.wav
+        ├── xc123457_B_0.wav
+        └── ... (20,000 files)
 ```
 
-## Output Files
+## Configuration
 
-### Stage-Specific Outputs
-- **Stage 2**:
-  - `Stage2_xc_successful_downloads.csv` - Successful downloads with full metadata
-  - `Stage2_download_log.csv` - Complete download log
-  - `Stage2_xc_failed_downloads.csv` - Failed downloads
-- **Stage 4**:
-  - `duplicate_pairs.txt` - Near-duplicate pairs
-  - `Stage4_unique_flacs.csv` - **Non-quarantined files with metadata**
-  - `quarantine/` - Quarantined duplicate files
-- **Stage 5**: `clips_log.csv` - All extracted clips with enriched metadata
-- **Stage 6**:
-  - `balanced_clips.csv` - Metadata file listing clips in balanced dataset
-  - `species_balance.png` - Before/after distribution visualization
-- **Stage 7**: `quarantine/` - Excluded clips moved here (preserves data)
+### Pipeline Configuration (run_pipeline.sh)
 
-## Dependencies
+Edit paths in `run_pipeline.sh`:
 
 ```bash
-pip install librosa numpy pandas requests tqdm soundfile matplotlib
+MP3_DIR="/Volumes/Evo/xc-asean-mp3s"
+FLAC_DIR="/Volumes/Evo/xc-asean-flac"
+CLIPS_DIR="/Volumes/Evo/xc-asean-clips"
+DATASET_DIR="/Volumes/Evo/newdataset"
 ```
 
-## Usage Notes
+### Target Dataset Size
 
-### General Pipeline
-1. **Complete workflow**: Stages 1-7 form a complete data curation pipeline
-2. **Stage 5 + 6 + 7 workflow**: Run Stage 5 with `--no-quarantine`, then Stage 6 for balancing, then Stage 7 to move files
-3. **Memory usage**: Stage 4 and 6 load data into RAM; consider batch processing for >100k files
+**Method 1**: Edit `Stage6_balance_species.py`
 
-### CLI Consistency
-All stages now use standardized arguments:
-- Input CSV: `--input-csv FILE`
-- Output CSV: `--output-csv FILE`
-- Input directory: `--inroot DIR`
-- Output directory: `--outroot DIR`
+```python
+TARGET_DATASET_SIZE = 20000  # Change to desired size
+```
 
-### Stage-Specific
-1. **Stage 2 - Skip short files**: Automatically skips files < 3 seconds
-2. **Stage 4 - Metadata propagation**: Requires `--stage2-csv` to create enriched output CSV
-3. **Stage 4 - Quarantine strategy**: Keeps older recordings (lower XC numbers)
-4. **Stage 5 - Metadata enrichment**: Use `--metadata-csv Stage4_unique_flacs.csv` for full metadata
-5. **Stage 5 - Balancing workflow**: Must use `--no-quarantine` if you plan to run Stage 6
-6. **Stage 6 - Target size**: If not specified, defaults to 75% of total clips (rounded to nearest 1000)
-7. **Stage 7 - Safety**: Moves files to quarantine instead of deleting (safer, preserves data)
+**Method 2**: Use CLI argument
 
-## Recent Updates
+```bash
+python Stage6_balance_species.py --target-size 50000
+```
 
-**Metadata Enrichment & CLI Standardization (2025-12-23):**
-1. **Stage 2**: Added metadata fields (recorder, country, lat/lon, license) to output CSV
-2. **Stage 4**: Creates `Stage4_unique_flacs.csv` with metadata for non-quarantined files
-3. **Stage 5**: Enriches output with metadata from Stage4 CSV (recorder, country, coordinates, license)
-4. **CLI Standardization**: All stages now use consistent argument naming (--input-csv, --output-csv, --inroot, --outroot)
-5. **Removed redundancy**: Removed `clip_start_sec` field (use `clip_start_ms` instead)
-6. **Improved filtering**: Stage 2 skips files < 3 seconds and 4xx/5xx errors immediately
+### Audio Processing Parameters
 
-**Stage 6 & 7 Addition (2025-12-16):**
-1. Added Stage 6: Species balancing with diversity optimization
-   - XC ID diversity maximization (prioritizes unique recordings)
-   - Quality-weighted selection (A > B > C > D ratings)
-   - Gini coefficient tracking for distribution equality
-   - Auto-calculated target size (75% of clips, configurable)
-2. Added Stage 7: Move excluded files to quarantine
-   - Physically reorganizes files after Stage 6 balancing
-   - Safer than deletion (preserves excluded clips)
-   - Verification of file counts
+**Stage 3 - Conversion**:
+- Sample rate: 16000 Hz
+- Channels: Mono
+- Format: FLAC
 
-**Stage 4 Quarantine Strategy (2025-12-23):**
-1. Changed quarantine logic to keep **older recordings** (lower XC numbers)
-2. Creates `Stage4_unique_flacs.csv` for downstream processing
+**Stage 4 - Deduplication**:
+- Similarity threshold: 0.95
+- Perfect duplicate threshold: 0.999
+- Mel bins: 128
+- Max frequency: 8000 Hz
+
+**Stage 5 - Clip Extraction**:
+- Clip duration: 3.0 seconds
+- Minimum RMS: 0.001
+- Minimum separation: 1.5 seconds
+
+## Performance Notes
+
+### Expected Processing Times
+
+| Stage | Time (approx) | Notes |
+|-------|---------------|-------|
+| Stage 1 | 5-10 minutes | API-dependent |
+| Stage 2 | 2-6 hours | 40k files, network-dependent |
+| Stage 3 | 30-60 minutes | 8 workers |
+| Stage 4 | 60-120 minutes | Audio similarity computation |
+| Stage 5 | 20-40 minutes | Clip extraction |
+| Stage 6 | < 1 minute | Metadata-only |
+| Stage 7 | 10-20 minutes | File copying |
+
+**Total pipeline runtime**: 4-8 hours
+
+### Disk Space Requirements
+
+- MP3s: ~15-20 GB
+- FLACs: ~25-35 GB
+- Clips: ~40-60 GB
+- Final dataset (20,000 clips): ~2-3 GB
+
+**Total working space**: ~80-120 GB
+
+### File Counts (Southeast Asia)
+
+- Stage 1: ~42,000 unique records
+- Stage 2: ~39,000 successful downloads
+- Stage 3: ~39,000 FLACs
+- Stage 4: ~38,000 unique FLACs (after deduplication)
+- Stage 5: ~200,000+ clips
+- Stage 6: 20,000 balanced clips (default)
+- Stage 7: 20,000 clips in final dataset
+
+## Troubleshooting
+
+### Stage 2: Download Failures
+
+**Issue**: Some downloads fail with 404 or timeout errors
+
+**Solution**:
+- Failed downloads are logged in `Stage2_xc_failed_downloads.csv`
+- Xeno-Canto occasionally removes recordings
+- Re-run Stage 2 to retry failed downloads (it will skip existing files)
+
+### Stage 2: Duplicate CSV Entries
+
+**Issue**: Running Stage 2 multiple times created duplicate entries in CSV
+
+**Solution**:
+- This has been fixed in the latest version
+- To clean existing duplicates:
+  ```bash
+  head -1 Stage2_xc_successful_downloads.csv > temp.csv
+  tail -n +2 Stage2_xc_successful_downloads.csv | sort -u >> temp.csv
+  mv temp.csv Stage2_xc_successful_downloads.csv
+  ```
+
+### Stage 3: Conversion Errors
+
+**Issue**: FFmpeg errors or missing files
+
+**Solution**:
+- Ensure ffmpeg is installed: `ffmpeg -version`
+- Check `Stage3_failed_conversion.csv` for specific errors
+- Re-run Stage 3 (it will skip existing conversions)
+
+### Stage 3: "Found 0 sound files"
+
+**Issue**: Stage 3 reports no matching files despite files existing
+
+**Solution**:
+- This has been fixed (XC ID extraction from filenames)
+- Ensure Stage 2 CSV is not corrupted
+- Check that MP3 filenames match format: `xc{id}_{quality}.mp3`
+
+### Stage 4: Out of Memory
+
+**Issue**: Memory errors during embedding computation
+
+**Solution**:
+- Process in smaller batches
+- Increase system RAM
+- Use `--no-quarantine-near-duplicates` to skip similarity computation
+- Close other applications
+
+### Pipeline Interruption
+
+**Issue**: Pipeline stopped mid-execution
+
+**Solution**:
+- The pipeline is resume-safe
+- Simply re-run `./run_pipeline.sh`
+- Each stage skips existing files and CSVs
+
+## Advanced Usage
+
+### Different Geographic Regions
+
+Edit `Stage1_xc_fetch_bird_metadata.py`:
+
+```python
+COUNTRIES = {
+    "United States": "US",
+    "Canada": "CA",
+    "Mexico": "MX"
+}
+```
+
+### Quality Filtering
+
+Edit `Stage2_xc_download_bird_mp3s.py` to only download high-quality recordings:
+
+```python
+# Only download A and B quality
+if q_char not in ['A', 'B']:
+    logger.info(f"Skipping quality {q_char}")
+    continue
+```
+
+### Custom Clip Duration
+
+Edit `Stage5_extract_3s_clips_from_flac.py`:
+
+```python
+CLIP_DURATION = 5.0  # 5-second clips instead of 3
+```
+
+### Species-Specific Dataset
+
+Filter `Stage1_xc_sea_birds.csv` for specific species before running Stage 2:
+
+```python
+import pandas as pd
+
+df = pd.read_csv('Stage1_xc_sea_birds.csv')
+df_filtered = df[df['en'].isin(['Oriental Magpie-Robin', 'Common Tailorbird'])]
+df_filtered.to_csv('Stage1_filtered.csv', index=False)
+```
+
+Then run pipeline with `--input-csv Stage1_filtered.csv` for Stage 2.
+
+## Key Parameters Summary
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| Sample Rate | 16 kHz | Consistent audio processing |
+| Clip Duration | 3.0 sec | Fixed-length segments |
+| Audio Format | FLAC (Stage 3-4), WAV (Stage 5+) | Lossless compression |
+| Channels | Mono | Single-channel audio |
+| Min Separation | 1.5 sec | Between clips from same file |
+| Target Dataset | 20,000 | Balanced final dataset size |
+| Workers | 8 | Parallel processing threads |
 
 ## Project Context
 
-Part of the Malaysian Bird Audio Dataset (MyBAD) project for training bird sound classification models. The pipeline ensures high-quality, deduplicated training data with rich metadata from community-contributed recordings.
+Part of the **Malaysian Bird Audio Dataset (MyBAD)** project for training bird sound classification models. The pipeline ensures high-quality, deduplicated training data with rich metadata from community-contributed Xeno-Canto recordings.
 
-## Repository
+## Recent Updates
 
-https://github.com/mun3im/mybad/tree/main/positive_label_curation
+**2026-01-08: Complete Pipeline Overhaul**
+- Added `run_pipeline.sh` for automated execution
+- Standardized CSV naming: `Stage1_*.csv`, `Stage2_*.csv`, etc.
+- Fixed Stage 2 duplicate CSV bug
+- Fixed Stage 3 file matching (XC ID extraction)
+- Updated Stage 7 to create dataset directories instead of quarantine
+- Added auto-incrementing dataset directory naming
+- Set default target dataset size to 20,000
+
+**2025-12-23: Metadata Enrichment & CLI Standardization**
+- Stage 2: Added metadata fields (recorder, country, lat/lon, license)
+- Stage 4: Creates `Stage4_unique_flacs.csv` with metadata
+- Stage 5: Enriches output with metadata from Stage 4
+- CLI standardization across all stages
+
+**2025-12-16: Species Balancing**
+- Added Stage 6: Species balancing with diversity optimization
+- Added Stage 7: Dataset directory creation
+
+## Citation
+
+If you use this pipeline, please cite Xeno-Canto:
+
+```
+Xeno-canto: Bird sounds from around the world.
+https://www.xeno-canto.org/
+```
 
 ## License
 
-See main repository for license information.
+This pipeline is provided for research and educational purposes. Please respect Xeno-Canto's terms of service and the individual Creative Commons licenses of each recording.
+
+## Contributing
+
+Contributions welcome! Please open issues for bugs or feature requests.
+
+## Repository
+
+https://github.com/mun3im/mybad-curation/tree/main/positive-label-curation
+
+## Support
+
+For questions or issues, please open a GitHub issue with:
+- Stage where error occurred
+- Error message
+- Relevant CSV/log files
+- System information (OS, Python version, ffmpeg version)
