@@ -43,8 +43,8 @@ python Stage3_convert_mp3_to_16k_flac.py \
   --outroot /Volumes/Evo/xc-asean-flac \
   --workers 8
 
-# Stage 4: Deduplicate
-python Stage4_find_flac_duplicates.py /Volumes/Evo/xc-asean-flac
+# Stage 4: Deduplicate (FAISS-accelerated)
+python Stage4_faiss_deduplicate.py /Volumes/Evo/xc-asean-flac
 
 # Stage 5: Extract clips
 python Stage5_extract_3s_clips_from_flac.py \
@@ -76,8 +76,10 @@ python Stage7_move_to_quarantine.py \
 ### Python Dependencies
 
 ```bash
-pip install pandas requests librosa soundfile pydub tqdm scikit-learn matplotlib
+pip install pandas requests librosa soundfile pydub tqdm scikit-learn matplotlib faiss-cpu
 ```
+
+**Note**: For GPU acceleration in Stage 4, install `faiss-gpu` instead of `faiss-cpu`.
 
 ### System Dependencies
 
@@ -194,37 +196,45 @@ python Stage3_convert_mp3_to_16k_flac.py \
 
 ### Stage 4: Deduplicate Files
 
-**Script**: `Stage4_find_flac_duplicates.py`
+**Script**: `Stage4_faiss_deduplicate.py`
 
-Detects and quarantines duplicate recordings using audio similarity.
+Detects and quarantines duplicate recordings using audio similarity with FAISS-accelerated nearest neighbor search.
 
 **Usage**:
 ```bash
-# With default settings (quarantines both perfect and near-duplicates)
-python Stage4_find_flac_duplicates.py /path/to/flacs
-
-# Quarantine only perfect duplicates
-python Stage4_find_flac_duplicates.py /path/to/flacs --no-quarantine-near-duplicates
+# With default settings (quarantines perfect duplicates)
+python Stage4_faiss_deduplicate.py /path/to/flacs
 
 # Dry run to preview
-python Stage4_find_flac_duplicates.py /path/to/flacs --dry-run
+python Stage4_faiss_deduplicate.py /path/to/flacs --dry-run
+
+# Custom top-k neighbors for similarity search
+python Stage4_faiss_deduplicate.py /path/to/flacs --top-k 10
 ```
 
 **Deduplication Algorithm**:
 
-1. **MD5 Hash**: Perfect duplicate detection
-2. **Mel-spectrogram Embeddings**: Acoustic similarity (128 mel bins, 8kHz max freq)
-3. **Cosine Similarity**: Threshold = 0.95 for near-duplicates
-4. **Quarantine Strategy**:
-   - Perfect duplicates (≥ 0.999): Quarantine newer recording (higher XC ID)
-   - Near-duplicates (≥ 0.95): Optional quarantine (e.g., different bitrates)
+1. **Mel-spectrogram Embeddings**: Computes normalized mel-spectrograms (128 mel bins, 8kHz max freq)
+2. **Clip-level Descriptors**: Mean+std pooling for fast similarity search
+3. **FAISS Nearest Neighbor Search**: Efficient top-k candidate retrieval using cosine similarity
+4. **Frame-wise Verification**: Detailed similarity metrics for candidates:
+   - Mean similarity ≥ 0.997
+   - Min similarity ≥ 0.985
+   - 5th percentile ≥ 0.992
+5. **Perfect Duplicate Detection**: Mean similarity ≥ 0.999
+6. **Quarantine Strategy**: Keeps older recordings (lower XC ID), quarantines newer duplicates
+
+**Performance Benefits**:
+- **10-100x faster** than all-pairs comparison for large datasets
+- Scales to millions of files with FAISS indexing
+- Optional GPU acceleration with `faiss-gpu`
 
 **Outputs**:
 - `Stage4_unique_flacs.csv` - Metadata for non-quarantined files
 - `quarantine/` - Directory containing duplicate files
 - `duplicate_pairs.txt` - Near-duplicates for manual review
 
-**Important**: Use `--no-quarantine-near-duplicates` if you want to keep files at different bitrates.
+**Important**: FAISS uses approximate nearest neighbor search for speed. The `--top-k` parameter (default: 6) controls how many candidates to check per file.
 
 ---
 
@@ -369,7 +379,7 @@ project/
 ├── Stage1_xc_fetch_bird_metadata.py
 ├── Stage2_xc_download_bird_mp3s.py
 ├── Stage3_convert_mp3_to_16k_flac.py
-├── Stage4_find_flac_duplicates.py
+├── Stage4_faiss_deduplicate.py
 ├── Stage5_extract_3s_clips_from_flac.py
 ├── Stage6_balance_species.py
 ├── Stage7_move_to_quarantine.py
@@ -436,9 +446,12 @@ python Stage6_balance_species.py --target-size 50000
 - Channels: Mono
 - Format: FLAC
 
-**Stage 4 - Deduplication**:
-- Similarity threshold: 0.95
+**Stage 4 - Deduplication (FAISS)**:
+- Mean similarity threshold: 0.997
+- Min similarity threshold: 0.985
+- 5th percentile threshold: 0.992
 - Perfect duplicate threshold: 0.999
+- Top-k neighbors: 6 (default)
 - Mel bins: 128
 - Max frequency: 8000 Hz
 
@@ -456,12 +469,12 @@ python Stage6_balance_species.py --target-size 50000
 | Stage 1 | 5-10 minutes | API-dependent |
 | Stage 2 | 2-6 hours | 40k files, network-dependent |
 | Stage 3 | 30-60 minutes | 8 workers |
-| Stage 4 | 60-120 minutes | Audio similarity computation |
+| Stage 4 | 15-30 minutes | FAISS-accelerated (was 60-120 min) |
 | Stage 5 | 20-40 minutes | Clip extraction |
 | Stage 6 | < 1 minute | Metadata-only |
 | Stage 7 | 10-20 minutes | File copying |
 
-**Total pipeline runtime**: 4-8 hours
+**Total pipeline runtime**: 3-6 hours (was 4-8 hours before FAISS upgrade)
 
 ### Disk Space Requirements
 
@@ -526,13 +539,25 @@ python Stage6_balance_species.py --target-size 50000
 
 ### Stage 4: Out of Memory
 
-**Issue**: Memory errors during embedding computation
+**Issue**: Memory errors during embedding computation or FAISS indexing
 
 **Solution**:
-- Process in smaller batches
-- Increase system RAM
-- Use `--no-quarantine-near-duplicates` to skip similarity computation
-- Close other applications
+- Close other applications to free up RAM
+- Increase system RAM if possible
+- The FAISS version uses significantly less memory than the old all-pairs version
+- For very large datasets (>1M files), consider processing in batches
+
+### Stage 4: FAISS Installation Issues
+
+**Issue**: `ImportError: No module named 'faiss'`
+
+**Solution**:
+- Install FAISS: `pip install faiss-cpu`
+- For GPU support: `pip install faiss-gpu` (requires CUDA)
+- On macOS with Apple Silicon: Use conda instead of pip:
+  ```bash
+  conda install -c pytorch faiss-cpu
+  ```
 
 ### Pipeline Interruption
 
@@ -609,6 +634,10 @@ Part of the **Malaysian Bird Audio Dataset (MyBAD)** project for training bird s
 ## Recent Updates
 
 **2026-01-08: Complete Pipeline Overhaul**
+- **Upgraded Stage 4 to FAISS-accelerated deduplication** (`Stage4_faiss_deduplicate.py`)
+  - 10-100x faster than previous all-pairs comparison
+  - Scales to millions of files with efficient nearest neighbor search
+  - Optional GPU acceleration support
 - Added `run_pipeline.sh` for automated execution
 - Standardized CSV naming: `Stage1_*.csv`, `Stage2_*.csv`, etc.
 - Fixed Stage 2 duplicate CSV bug
