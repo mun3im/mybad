@@ -103,7 +103,7 @@ python Stage3_convert_mp3_to_16k_flac.py \
 ---
 
 ### Stage 4: Detect Duplicates
-**Script:** `Stage4_find_flac_duplicates.py`
+**Script:** `Stage4_faiss_deduplicate.py`
 
 Detects and quarantines duplicate audio clips using acoustic similarity. **Quarantines newer duplicates** (higher XC numbers) to keep older recordings.
 
@@ -116,12 +116,12 @@ Detects and quarantines duplicate audio clips using acoustic similarity. **Quara
 **Usage:**
 ```bash
 # Find duplicates and create unique files CSV
-python Stage4_find_flac_duplicates.py /path/to/flacs \
+python Stage4_faiss_deduplicate.py /path/to/flacs \
   --stage2-csv Stage2_xc_successful_downloads.csv \
   --stage4-csv Stage4_unique_flacs.csv
 
 # Dry run to preview
-python Stage4_find_flac_duplicates.py /path/to/flacs \
+python Stage4_faiss_deduplicate.py /path/to/flacs \
   --stage2-csv Stage2_xc_successful_downloads.csv \
   --dry-run
 ```
