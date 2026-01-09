@@ -1,6 +1,6 @@
 # Negative Label Curation Pipeline
 
-Automated pipeline for extracting 25,000 high-quality negative (non-bird) audio samples for bird detection model training.
+Automated pipeline for extracting 20,000 high-quality negative (non-bird) audio samples for bird detection model training.
 
 ## Overview
 
