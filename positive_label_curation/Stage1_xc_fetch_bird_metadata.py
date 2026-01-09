@@ -22,13 +22,13 @@ Set XENO_API_KEY environment variable before running:
 Usage examples:
 
 # Fetch single country
-python Stage1_xc_fetch_bird_metadata.py --country Malaysia --output-csv xc_my_birds.csv
+python Stage1_xc_fetch_bird_metadata.py --country Malaysia --output-csv Stage1_xc_my_birds.csv
 
-# Fetch all Southeast Asian countries (recommended for maximizing dataset)
-python Stage1_xc_fetch_bird_metadata.py --country all --output-csv xc_sea_birds.csv
+# Fetch all Southeast Asian countries (recommended for maximizing dataset, uses default output)
+python Stage1_xc_fetch_bird_metadata.py --country all
 
 # Fetch multiple specific countries
-python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Singapore Indonesia --output-csv xc_multi.csv
+python Stage1_xc_fetch_bird_metadata.py --countries Malaysia Singapore Indonesia --output-csv Stage1_xc_multi.csv
 
 """
 
@@ -43,7 +43,7 @@ import argparse
 
 # ------------ CONFIG -------------
 SUPPORTED_COUNTRIES = ["Malaysia", "Singapore", "Indonesia", "Brunei", "Thailand"]
-OUT_CSV_DEFAULT = "xc_sea_birds.csv"  # Southeast Asia birds
+OUT_CSV_DEFAULT = "Stage1_xc_sea_birds.csv"  # Southeast Asia birds
 BASE_URL = "https://xeno-canto.org/api/3/recordings"
 RATE_LIMIT_DELAY = 0.2
 MAX_RETRIES = 4
@@ -192,7 +192,7 @@ EXAMPLES:
 
     # Output options
     parser.add_argument("--output-csv", default=OUT_CSV_DEFAULT, metavar="FILE",
-                        help="Output CSV filename (default: xc_sea_birds.csv)")
+                        help="Output CSV filename (default: Stage1_xc_sea_birds.csv)")
     parser.add_argument("--add-country-column", action="store_true",
                         help="Add 'fetch_country' column to track which country query returned each record")
 

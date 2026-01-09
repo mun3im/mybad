@@ -1,16 +1,23 @@
 #!/usr/bin/env python3
 """
-Audio Conversion Pipeline
+Stage3_convert_mp3_to_16k_flac.py
 
-Converts audio files to mono 16kHz 16-bit FLAC format with:
+Converts downloaded MP3 files to mono 16kHz 16-bit FLAC format.
+
+Input: Stage2_xc_successful_downloads.csv (default)
+Outputs:
+  - Stage3_xc_successful_conversion.csv (successful conversions)
+  - Stage3_failed_conversion.csv (failed conversions)
+
+Features:
 - Clipping detection and correction
 - Optional peak normalization
-- Minimum sample rate filtering
+- Minimum sample rate filtering (default: 16kHz)
 - Parallel processing
-- Comprehensive logging
+- Ignores non-sound files
 
 Usage:
-    python convert_to_16k_flac.py --inroot ./raw --outroot ./processed --min-sr 16k
+    python Stage3_convert_mp3_to_16k_flac.py --inroot ./data --outroot ./flac
 """
 
 from __future__ import annotations
@@ -37,7 +44,9 @@ DEFAULT_MIN_SR = 16000     # Only process files ≥ 16kHz
 TARGET_CHANNELS = 1
 TARGET_FORMAT = "flac"
 TARGET_SUBTYPE = "PCM_16"
-LOG_CSV = "conversion_log.csv"
+INPUT_CSV = "Stage2_xc_successful_downloads.csv"
+SUCCESS_CSV = "Stage3_xc_successful_conversion.csv"
+FAILED_CSV = "Stage3_failed_conversion.csv"
 
 # Logging setup
 logging.basicConfig(
@@ -57,6 +66,8 @@ class ConversionResult:
     clipped_flag: bool = False
     status: str = "error"
     error: Optional[str] = None
+    # CSV record fields
+    csv_record: Optional[dict] = None
 
 
 class AudioProbe:
@@ -272,9 +283,9 @@ class FileConverter:
         except Exception:
             pass
 
-    def convert(self, in_path: str, rel_subdir: str) -> ConversionResult:
+    def convert(self, in_path: str, rel_subdir: str, csv_record: Optional[dict] = None) -> ConversionResult:
         """Convert a single audio file through the complete pipeline."""
-        result = ConversionResult(input_path=in_path)
+        result = ConversionResult(input_path=in_path, csv_record=csv_record)
 
         try:
             # Check sample rate requirement
@@ -356,7 +367,9 @@ class ConversionPipeline:
             normalize_db: Optional[float] = None,
             allow_boost: bool = False,
             min_sr: Optional[int] = None,
-            log_csv_path: str = LOG_CSV
+            input_csv: str = INPUT_CSV,
+            success_csv: str = SUCCESS_CSV,
+            failed_csv: str = FAILED_CSV
     ):
         self.inroot = Path(inroot)
         self.outroot = Path(outroot)
@@ -364,21 +377,59 @@ class ConversionPipeline:
         self.normalize_db = normalize_db
         self.allow_boost = allow_boost
         self.min_sr = min_sr
-        self.log_csv_path = log_csv_path
+        self.input_csv = input_csv
+        self.success_csv = success_csv
+        self.failed_csv = failed_csv
 
-    def _discover_files(self) -> list[tuple[str, str]]:
-        """Discover all audio files in input directory."""
-        files = []
+    def _load_csv_records(self) -> list[dict]:
+        """Load records from Stage2 CSV file."""
+        if not os.path.exists(self.input_csv):
+            logger.error(f"Input CSV not found: {self.input_csv}")
+            return []
+
+        df = pd.read_csv(self.input_csv)
+        logger.info(f"Loaded {len(df)} records from {self.input_csv}")
+        return df.to_dict('records')
+
+    def _discover_files(self) -> list[tuple[str, str, dict]]:
+        """Discover audio files matching CSV records."""
+        csv_records = self._load_csv_records()
+        if not csv_records:
+            return []
+
+        # Build a map of available files by XC ID
+        # Filenames are like: xc422286_B.mp3, we extract the ID (422286)
+        available_files = {}
         for root, _, filenames in os.walk(self.inroot):
             rel_dir = os.path.relpath(root, self.inroot)
             if rel_dir == ".":
                 rel_dir = ""
 
             for fn in filenames:
-                if not fn.startswith("."):
+                if not fn.startswith(".") and not fn.startswith("._"):
                     full_path = os.path.join(root, fn)
-                    files.append((full_path, rel_dir))
+                    # Extract XC ID from filename (xc422286_B.mp3 -> 422286)
+                    import re
+                    match = re.match(r'xc(\d+)', fn.lower())
+                    if match:
+                        xc_id = match.group(1)
+                        available_files[xc_id] = (full_path, rel_dir)
 
+        # Match CSV records to files, ignoring non-sound files
+        files = []
+        sound_extensions = {'.mp3', '.wav', '.flac', '.m4a', '.ogg', '.aac', '.wma'}
+
+        for record in csv_records:
+            file_id = str(record['id'])
+            if file_id in available_files:
+                full_path, rel_dir = available_files[file_id]
+                # Check if it's a sound file
+                if Path(full_path).suffix.lower() in sound_extensions:
+                    files.append((full_path, rel_dir, record))
+                else:
+                    logger.debug(f"Skipping non-sound file: {full_path}")
+
+        logger.info(f"Found {len(files)} sound files matching CSV records")
         return files
 
     def run(self):
@@ -407,8 +458,8 @@ class ConversionPipeline:
             # Process files in parallel
             with ThreadPoolExecutor(max_workers=self.workers) as executor:
                 futures = {
-                    executor.submit(converter.convert, path, rel): (path, rel)
-                    for path, rel in files
+                    executor.submit(converter.convert, path, rel, record): (path, rel, record)
+                    for path, rel, record in files
                 }
 
                 for future in as_completed(futures):
@@ -426,10 +477,36 @@ class ConversionPipeline:
                             f"(status={result.status}, error={result.error})"
                         )
 
-            # Save results
-            df = pd.DataFrame([asdict(r) for r in results])
-            df.to_csv(self.log_csv_path, index=False)
-            logger.info(f"Wrote conversion log to {self.log_csv_path}")
+            # Separate successful and failed conversions
+            successful_records = []
+            failed_records = []
+
+            for result in results:
+                if result.csv_record is not None:
+                    if result.status == "ok":
+                        successful_records.append(result.csv_record)
+                    else:
+                        # Add error information to failed record
+                        failed_record = result.csv_record.copy()
+                        failed_record['error'] = result.error
+                        failed_record['status'] = result.status
+                        failed_records.append(failed_record)
+
+            # Save successful conversions
+            if successful_records:
+                df_success = pd.DataFrame(successful_records)
+                df_success.to_csv(self.success_csv, index=False)
+                logger.info(f"Wrote {len(successful_records)} successful records to {self.success_csv}")
+            else:
+                logger.warning("No successful conversions to save")
+
+            # Save failed conversions
+            if failed_records:
+                df_failed = pd.DataFrame(failed_records)
+                df_failed.to_csv(self.failed_csv, index=False)
+                logger.info(f"Wrote {len(failed_records)} failed records to {self.failed_csv}")
+            else:
+                logger.info("No failed conversions")
 
         finally:
             # Cleanup
@@ -513,12 +590,24 @@ EXAMPLES:
         help="Minimum native sample rate (e.g., '24k', '16000')"
     )
 
-    # Output options
+    # CSV options
     parser.add_argument(
-        "--log-csv",
-        default=LOG_CSV,
+        "--input-csv",
+        default=INPUT_CSV,
         metavar="FILE",
-        help=f"Output CSV log path (default: {LOG_CSV})"
+        help=f"Input CSV from Stage 2 (default: {INPUT_CSV})"
+    )
+    parser.add_argument(
+        "--success-csv",
+        default=SUCCESS_CSV,
+        metavar="FILE",
+        help=f"Output CSV for successful conversions (default: {SUCCESS_CSV})"
+    )
+    parser.add_argument(
+        "--failed-csv",
+        default=FAILED_CSV,
+        metavar="FILE",
+        help=f"Output CSV for failed conversions (default: {FAILED_CSV})"
     )
 
     args = parser.parse_args()
@@ -529,6 +618,9 @@ EXAMPLES:
     logger.info("=" * 60)
     logger.info(f"Input root:      {args.inroot}")
     logger.info(f"Output root:     {args.outroot}")
+    logger.info(f"Input CSV:       {args.input_csv}")
+    logger.info(f"Success CSV:     {args.success_csv}")
+    logger.info(f"Failed CSV:      {args.failed_csv}")
     logger.info(f"Workers:         {args.workers}")
     logger.info(f"Normalize dB:    {args.normalize_db}")
     logger.info(f"Allow boost:     {args.allow_boost}")
@@ -543,7 +635,9 @@ EXAMPLES:
         normalize_db=args.normalize_db,
         allow_boost=args.allow_boost,
         min_sr=args.min_sr,
-        log_csv_path=args.log_csv
+        input_csv=args.input_csv,
+        success_csv=args.success_csv,
+        failed_csv=args.failed_csv
     )
 
     pipeline.run()

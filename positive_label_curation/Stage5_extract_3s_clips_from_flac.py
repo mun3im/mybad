@@ -2,15 +2,20 @@
 """
 Stage5_extract_3s_clips_from_flac.py
 
-Scan an input folder tree produced by xc_convert_to_16k_flac and extract 3.0s WAV
-chunks (16 kHz, PCM_16).
+Extracts 3-second WAV clips from FLAC files with metadata enrichment from Stage4.
+
+Input: Stage4_unique_flacs.csv (default, for metadata)
+Output: Stage5_unique_3sclips.csv (default)
+  - Contains all Stage4 metadata fields PLUS:
+    - start_ms: clip start time in milliseconds
+    - clip_filename: format xc{id}_{quality}_{start_ms}.wav
 
 Key features:
- - Writes 3s chunks as WAV files.
- - Ensures the logged RMS is the RMS of the saved 3s clip *after* any clipping correction.
- - Guarantees at least one sample per file (picks best if none exceed threshold).
- - Uses dual tqdm progress bars: one for species, one for files within each species.
- - Minimal verbose output for clean execution.
+ - Writes 3s chunks as WAV files (16 kHz, mono, PCM_16)
+ - Applies clipping correction when needed
+ - Guarantees at least one sample per file (picks best if none exceed threshold)
+ - Dual progress bars for species and files
+ - Two workflow modes: RMS-only (quick) or Balanced (for Stage6)
 
 TWO WORKFLOWS:
 
@@ -22,7 +27,8 @@ TWO WORKFLOWS:
        --inroot /path/to/flac \
        --outroot /path/to/clips \
        --threshold 0.001 \
-       --csv clips_log.csv \
+       --output-csv Stage5_unique_3sclips.csv \
+       --metadata-csv Stage4_unique_flacs.csv \
        --max-clips 25000
 
 2. BALANCED WORKFLOW (Ecologically Diverse):
@@ -33,12 +39,13 @@ TWO WORKFLOWS:
        --inroot /path/to/flac \
        --outroot /path/to/clips \
        --threshold 0.001 \
-       --csv clips_log.csv \
+       --output-csv Stage5_unique_3sclips.csv \
+       --metadata-csv Stage4_unique_flacs.csv \
        --no-quarantine
 
      Then run Stage6:
      python Stage6_balance_species.py \
-       --csv clips_log.csv \
+       --csv Stage5_unique_3sclips.csv \
        --outroot /path/to/clips \
        --output balanced_clips.csv \
        --target-size 16000
@@ -257,27 +264,34 @@ def process_file(path: Path, species: str, out_root: Path, sr_out: int, threshol
         metadata = metadata_lookup.get(xc_id, {})
 
     def make_record(start_ms, clip_dur, rms, clipped, fname, fpath):
-        """Helper to create CSV record with all fields including metadata."""
-        record = {
-            "xc_id": xc_id,
-            "species": species,
-            "quality": quality,
-            "recorder": metadata.get("rec", "") if metadata else "",
-            "country": metadata.get("cnt", "") if metadata else "",
-            "latitude": metadata.get("lat", "") if metadata else "",
-            "longitude": metadata.get("lon", "") if metadata else "",
-            "license": metadata.get("lic", "") if metadata else "",
-            "source_file": str(path),
-            "source_duration_sec": round(file_duration, 2),
-            "original_length": metadata.get("length", "") if metadata else "",
-            "sample_rate": metadata.get("smp", "") if metadata else "",
-            "clip_start_ms": start_ms,
-            "clip_duration_sec": clip_dur,
-            "rms_energy": float(rms),
-            "was_clipped": clipped,
-            "out_filename": fname,
-            "out_path": fpath
-        }
+        """Helper to create CSV record with all fields including metadata from Stage4."""
+        # Start with all Stage4 metadata fields
+        record = {}
+        if metadata:
+            # Copy all fields from Stage4 CSV
+            for key, value in metadata.items():
+                record[key] = value
+        else:
+            # If no metadata, populate with minimal required fields
+            # Normalize species name: replace underscores with spaces for consistency
+            normalized_species = species.replace('_', ' ')
+            record = {
+                "id": xc_id,
+                "en": normalized_species,
+                "rec": "",
+                "cnt": "",
+                "lat": "",
+                "lon": "",
+                "lic": "",
+                "q": quality,
+                "length": "",
+                "smp": ""
+            }
+
+        # Add Stage5-specific fields: start_ms and clip_filename
+        record["start_ms"] = start_ms
+        record["clip_filename"] = fname
+
         return record
 
     # Determine expected number of chunks and offset rule (3s windows)
@@ -437,11 +451,13 @@ WORKFLOWS:
 EXAMPLES:
   # RMS-only workflow (final dataset ready after Stage5)
   python Stage5_extract_3s_clips_from_flac.py --inroot flac/ --outroot clips/ \\
-    --output-csv clips_log.csv --max-clips 25000
+    --output-csv Stage5_unique_3sclips.csv --metadata-csv Stage4_unique_flacs.csv \\
+    --max-clips 25000
 
   # Balanced workflow (keep all clips for Stage6)
   python Stage5_extract_3s_clips_from_flac.py --inroot flac/ --outroot clips/ \\
-    --output-csv clips_log.csv --no-quarantine
+    --output-csv Stage5_unique_3sclips.csv --metadata-csv Stage4_unique_flacs.csv \\
+    --no-quarantine
         """
     )
 
@@ -452,10 +468,10 @@ EXAMPLES:
                         help="Output directory for extracted 3s WAV clips")
 
     # Output options
-    parser.add_argument("--output-csv", default="clips_log.csv", metavar="FILE",
-                        help="Output CSV file with clip metadata (default: clips_log.csv)")
-    parser.add_argument("--metadata-csv", type=Path, metavar="FILE",
-                        help="Stage4_unique_flacs.csv for enriching output with recorder, country, etc.")
+    parser.add_argument("--output-csv", default="Stage5_unique_3sclips.csv", metavar="FILE",
+                        help="Output CSV file with clip metadata (default: Stage5_unique_3sclips.csv)")
+    parser.add_argument("--metadata-csv", type=Path, default="Stage4_unique_flacs.csv", metavar="FILE",
+                        help="Stage4_unique_flacs.csv for enriching output with metadata (default: Stage4_unique_flacs.csv)")
 
     # Processing options
     parser.add_argument("--threshold", type=float, default=0.001, metavar="FLOAT",

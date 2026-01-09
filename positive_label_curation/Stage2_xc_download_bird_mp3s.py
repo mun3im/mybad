@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """
-xc_download_my_birds_fixed.py
+Stage2_xc_download_bird_mp3s.py
 
-Improved downloader for Xeno-Canto metadata CSV -> media files.
+Downloads audio files from Xeno-Canto based on metadata CSV from Stage1.
 
-Fixes and features:
- - robust handling when CSV cells are NaN/float (coerce to string safely)
- - appends quality: filename format `xc{ID}_{Q}{ext}` (e.g. xc422286_U.mp3)
- - writes an append-only download log CSV (download_log.csv) with status and errors
- - validates downloaded files by minimal size threshold and removes tiny files
- - uses .part temp files and resumes safely (skips existing final files)
- - creates output CSV with selected fields for successful downloads
- - records failed downloads to failed_downloads.csv for manual retry
+Input: Stage1_xc_sea_birds.csv (default)
+Outputs:
+  - Stage2_xc_successful_downloads.csv (successful downloads)
+  - Stage2_xc_failed_downloads.csv (failed downloads)
+  - Stage2_download_log.csv (detailed log)
+
+Features:
+ - Appends quality to filename: xc{ID}_{Q}{ext} (e.g. xc422286_U.mp3)
+ - Validates downloaded files by minimal size threshold
+ - Uses .part temp files and resumes safely (skips existing files)
+ - Records all attempts in detailed log
+
+Usage:
+  python Stage2_xc_download_bird_mp3s.py --outroot ./data
 """
 
 import argparse
@@ -320,11 +326,7 @@ def process_csv_and_download(csv_path: str, out_root: str, dry_run: bool = False
                 "id": id_str, "en": en, "file_url": file_url, "q": q_char, "out_path": out_path,
                 "status": "exists", "error": "", "bytes": os.path.getsize(out_path), "elapsed_s": 0.0, "ts": time.time()
             })
-            # Add to output CSV for existing files too
-            append_output_csv_row(OUTPUT_CSV, {
-                "id": id_str, "en": en, "rec": rec, "cnt": cnt, "lat": lat, "lon": lon,
-                "lic": lic, "q": q_char, "length": length, "smp": smp
-            })
+            # Don't append to output CSV for existing files (prevents duplicates on reruns)
             continue
 
         if dry_run:
@@ -404,8 +406,8 @@ EXAMPLES:
     )
 
     # Required arguments
-    p.add_argument("--input-csv", required=True, metavar="FILE",
-                   help="Path to input metadata CSV (must contain id,en,file,q columns)")
+    p.add_argument("--input-csv", default="Stage1_xc_sea_birds.csv", metavar="FILE",
+                   help="Path to input metadata CSV from Stage1 (default: Stage1_xc_sea_birds.csv)")
     p.add_argument("--outroot", required=False, default=DEFAULT_OUT_ROOT, metavar="DIR",
                    help=f"Output root folder (default: {DEFAULT_OUT_ROOT})")
 
