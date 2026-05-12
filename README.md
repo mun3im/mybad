@@ -320,13 +320,13 @@ If you use SEABAD or this curation pipeline, please cite:
   title   = {{SEABAD}: A Tropical Bird Audio Detection Dataset for Passive Acoustic Monitoring},
   author  = {Author Names},
   journal = {arXiv preprint arXiv:XXXX.XXXXX},
-  year    = {2025},
+  year    = {2026},
   url     = {https://github.com/mun3im/seabad}
 }
 
 @dataset{seabad_zenodo2025,
   title   = {{SEABAD} Dataset: 50,000 Southeast Asian Bird Audio Clips},
-  year    = {2025},
+  year    = {2026},
   url     = {https://zenodo.org/records/18290494},
   note    = {50,000 curated 3-second clips spanning 1,677 Southeast Asian bird species}
 }
