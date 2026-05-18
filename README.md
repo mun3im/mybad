@@ -316,14 +316,6 @@ All clips standardized to:
 If you use SEABAD or this curation pipeline, please cite:
 
 ```bibtex
-@article{seabad2025,
-  title   = {{SEABAD}: A Tropical Bird Audio Detection Dataset for Passive Acoustic Monitoring},
-  author  = {Author Names},
-  journal = {arXiv preprint arXiv:XXXX.XXXXX},
-  year    = {2026},
-  url     = {https://github.com/mun3im/seabad}
-}
-
 @dataset{seabad_zenodo2025,
   title   = {{SEABAD} Dataset: 50,000 Southeast Asian Bird Audio Clips},
   year    = {2026},
