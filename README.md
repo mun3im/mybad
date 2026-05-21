@@ -324,7 +324,7 @@ If you use SEABAD or this curation pipeline, please cite:
 }
 ```
 ```bibtex
-@misc{zabidi2026seabadtropicalbirdactivity,
+@misc{zabidi2026seabad,
       title={SEABAD: A Tropical Bird Activity Detection Dataset for Passive Acoustic Monitoring}, 
       author={Muhammad Mun'im Ahmad Zabidi and Mohd Yamani Idna Idris and Norisma Idris},
       year={2026},
