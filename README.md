@@ -4,7 +4,7 @@ A dataset of **50,000 automatically curated 3-second clips** spanning **1,677 So
 
 - 📦 **Dataset**: [zenodo.org/records/18290494](https://zenodo.org/records/18290494)
 - 💻 **Code**: [github.com/mun3im/seabad](https://github.com/mun3im/seabad)
-- 📄 **Paper**: *SEABAD: A Tropical Bird Audio Detection Dataset for Passive Acoustic Monitoring* (2026) -- in preparation
+- 📄 **Paper**: *SEABAD: A Tropical Bird Audio Detection Dataset for Passive Acoustic Monitoring* (2026) arXiV 2605.20853.
 
 ---
 
@@ -324,10 +324,14 @@ If you use SEABAD or this curation pipeline, please cite:
 }
 ```
 ```bibtex
-@journal{zabidi2026seabad,
-  title   = {{SEABAD}: ATropical Bird Activity Detection Dataset for Passive Acoustic Monitoring},
-  year    = {2026},
-  url     = {https://arxiv.org/pdf/2605.20853},
+@misc{zabidi2026seabadtropicalbirdactivity,
+      title={SEABAD: A Tropical Bird Activity Detection Dataset for Passive Acoustic Monitoring}, 
+      author={Muhammad Mun'im Ahmad Zabidi and Mohd Yamani Idna Idris and Norisma Idris},
+      year={2026},
+      eprint={2605.20853},
+      archivePrefix={arXiv},
+      primaryClass={cs.SD},
+      url={https://arxiv.org/abs/2605.20853}, 
 }
 ```
 
