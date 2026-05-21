@@ -323,6 +323,14 @@ If you use SEABAD or this curation pipeline, please cite:
   note    = {50,000 curated 3-second clips spanning 1,677 Southeast Asian bird species}
 }
 ```
+```bibtex
+@journal{zabidi2026seabad,
+  title   = {{SEABAD}: ATropical Bird Activity Detection Dataset for Passive Acoustic Monitoring},
+  year    = {2026},
+  url     = {https://arxiv.org/pdf/2605.20853},
+}
+```
+
 
 **Please also credit**:
 - [Xeno-Canto](https://www.xeno-canto.org/) and original recordists
