@@ -194,7 +194,6 @@ If you use these baseline results, please cite the SEABAD paper:
 
 - **High-resolution spectrograms** (224×224) are used for validation to thoroughly assess dataset quality with standard CV architectures
 - These exceed typical embedded deployment constraints but enable fair comparison across architectures
-- For ultra-lightweight models optimized for microcontroller deployment, see future work
 - Results demonstrate SEABAD's suitability for developing edge-optimized bird audio detectors
 
 ## 🔗 Links
