@@ -179,11 +179,13 @@ MobileNetV3-Small achieves **22× better parameter efficiency** than ResNet50.
 If you use these baseline results, please cite the SEABAD paper:
 
 ```bibtex
-@article{seabad2025,
+@article{seabad2026,
   title={SEABAD: A Tropical Bird Audio Detection Dataset for Passive Acoustic Monitoring},
   author={Author Names},
-  journal={arXiv preprint arXiv:XXXX.XXXXX},
-  year={2025}
+  journal={arXiv preprint arXiv:2605.20853},
+  year={2026},
+  eprint={2605.20853},
+  archivePrefix={arXiv}
 }
 ```
 
@@ -198,7 +200,7 @@ If you use these baseline results, please cite the SEABAD paper:
 
 - **Dataset**: https://zenodo.org/records/18290494
 - **Main Repository**: https://github.com/mun3im/seabad
-- **Paper**: [arXiv link coming soon]
+- **Paper**: https://arxiv.org/abs/2605.20853
 
 ## 📧 Contact
 
